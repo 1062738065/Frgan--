@@ -1,8 +1,8 @@
 /* =============================================================================
    نظام توثيق الأداء — جمعية فرقان لتحفيظ القرآن الكريم بالطائف
    Vanilla JS / HTML / CSS build — no React, no build step.
-   All data is stored in Google Sheets through a Google Apps Script web app
-   (see Code.gs + config.js). No localStorage data — only the login session.
+   All data persists to localStorage under the same keys the original
+   React version used, so any data saved there before is preserved.
    ============================================================================= */
 
 /* =============================== Design tokens (JS mirror of CSS vars) ===== */
@@ -39,7 +39,7 @@ const SECTIONS = [
   { id: "evidence", label: "الشواهد والمرفقات" },
   { id: "review", label: "المراجعة والاعتماد" },
 ];
-const GENERIC_SECTION_IDS = ["impact", "recommendations", "nextplan", "evidence", "review"];
+const GENERIC_SECTION_IDS = ["evidence", "review"];
 
 const PHASES = [
   { id: "phase1", label: "التأسيس", sectionIds: ["basic", "goals", "kpi"] },
@@ -118,9 +118,9 @@ function computeResponseRate(sampleSize, respondentsCount) {
   return Math.round((r / s) * 100);
 }
 
-const REPORTING_TYPES_BASE = ["إدارة", "قسم", "وحدة", "مكتب", "مركز"];
+const REPORTING_TYPES_BASE = ["قسم", "وحدة", "مكتب", "مركز"];
 const OFFICE_NAMES_BASE = ["مكتب الداخل", "مكتب الحوية"];
-const TERM_OPTIONS_BASE = ["الأول", "الثاني", "الصيفي"];
+const TERM_OPTIONS_BASE = ["الأول", "الثاني", "الثالث", "صيفي"];
 const WORK_TYPES_BASE = ["حلقة قرآنية", "برنامج تعليمي", "برنامج تربوي", "دورة تدريبية", "لقاء", "ورشة عمل", "زيارة إشرافية", "اختبار", "مبادرة", "مشروع", "دراسة", "استبانة", "اجتماع", "خدمة للمستفيدات", "إنتاج دليل أو أداة"];
 const DELIVERY_MODES = ["حضوري", "عن بُعد", "مدمج"];
 const EXECUTION_STATUSES = ["مكتمل", "مستمر", "متعثر", "مؤجل", "ملغى"];
@@ -137,148 +137,103 @@ const INITIATIVE_STAGES = ["فكرة", "تصميم", "تجربة", "تنفيذ",
 const MEASUREMENT_TOOL_TYPES = ["استبانة", "اختبار قبلي وبعدي", "اختبار تحصيلي", "بطاقة ملاحظة", "قائمة تحقق", "مقابلة", "مجموعة تركيز", "تحليل سجلات", "تحليل شكاوى ومقترحات", "قياس رضا", "قياس أثر", "تقييم أداء"];
 const TOOL_RESULT_QUALITY = ["كافية لاتخاذ قرار", "مؤشر أولي يحتاج تعزيز", "غير كافية بسبب ضعف الاستجابة", "تحتاج إلى إعادة تطبيق", "تحتاج إلى أداة إضافية"];
 const COMPARISON_JUDGMENTS = ["تحسن", "ثابت", "تراجع", "لا توجد بيانات للمقارنة"];
-/* ---- ثوابت الأقسام ١١–١٥ (حسب ملف النموذج) ---- */
-const IMPACT_TYPES = ["تعليمي", "تربوي", "سلوكي", "اجتماعي", "مهني", "تقني", "مؤسسي", "مالي", "أثر في الأسرة", "أثر في فئة خاصة"];
-const RECOMMENDATION_SOURCES = ["نتيجة مؤشر", "أداة قياس", "صعوبة", "فرصة تحسين", "قصة أثر", "ملاحظة إشرافية", "شكوى متكررة", "تحليل بيانات"];
-const RECOMMENDATION_LEVELS = ["تنفذها الوحدة", "تنفذها إدارة القسم", "تحتاج تعاون عدة أقسام", "تحتاج قرار إدارة التعليم", "تحتاج قرار الإدارة العليا"];
-const EVIDENCE_FILE_TYPES = ["صورة", "كشف حضور", "نتيجة استبانة", "تقرير مالي", "محضر اجتماع", "رابط لوحة مؤشرات", "نموذج من المخرجات", "خطاب", "قصة نجاح", "فيديو موثق وفق السياسة", "ملف آخر"];
-const CONFIDENTIALITY_LEVELS = ["متاح في التقرير العام", "متاح للإدارة فقط", "سري ولا يظهر إلا للمخولين"];
-const REVIEW_DECISIONS = ["معتمد دون ملاحظات", "معتمد بعد التعديل", "يعاد للاستكمال"];
-const REVIEW_CHECKLIST = ["راجعت صحة الأرقام", "تأكدت من عدم تكرار المستفيدات", "أرفقت الأدلة اللازمة", "ربطت التوصيات بالنتائج", "لم أدرج بيانات شخصية غير مصرح بها", "راجعت الصياغة", "اعتمدت مديرة الوحدة البيانات"];
-const APPROVAL_PATH = ["تدخل الموظفة أو مسؤولة الوحدة البيانات", "تراجع مديرة الوحدة صحة الأرقام والشواهد", "تصل البيانات إلى مديرة القسم", "يظهر لمديرة القسم ملخص لجميع وحداتها", "تعتمد مديرة القسم أبرز النتائج والتوصيات", "يجمع النظام بيانات الأقسام في لوحة إدارة التعليم", "يصوغ الذكاء الاصطناعي الملخص التنفيذي", "تراجع إدارة التعليم الصياغة وتعتمد التقرير النهائي"];
-const MAIN_ENTITY_OPTIONS = ["إدارة التعليم النسائي"];
-const NEXT_PLAN_MIN = 3, NEXT_PLAN_MAX = 5;
 const CHANGE_REASONS = ["تحسن التخطيط", "زيادة الكادر", "تدريب الموظفات", "تطوير الإجراءات", "زيادة المستفيدات", "تغير وقت التنفيذ", "نقص الكادر", "انخفاض الحضور", "ظروف موسمية", "ضعف الموارد"];
 
-/* =============================== Storage layer: Google Sheets via Apps Script == */
-/* كل البيانات تُحفظ في Google Sheets عبر Apps Script (انظري Code.gs و config.js).
-   الواجهة تعمل على نسخة في الذاكرة، وكل تعديل يُرسَل للخادم بالترتيب عبر طابور (sync). */
-const SESSION_KEY = "prs:session";
-function readSession() { try { const v = localStorage.getItem(SESSION_KEY); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
-function writeSession(s) { try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch (e) {} }
-function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch (e) {} }
+const IMPACT_TYPES = ["تعليمي", "تربوي", "سلوكي", "اجتماعي", "مهني", "تقني", "مؤسسي", "مالي", "أثر في الأسرة", "أثر في فئة خاصة"];
+const RECOMMENDATION_SOURCES = ["نتيجة مؤشر", "أداة قياس", "صعوبة", "فرصة تحسين", "قصة أثر", "ملاحظة إشرافية", "شكوى متكررة", "تحليل بيانات", "أخرى"];
+const RECOMMENDATION_LEVELS = ["تنفذها الوحدة", "تنفذها إدارة القسم", "تحتاج تعاون عدة أقسام", "تحتاج قرار إدارة التعليم", "تحتاج قرار الإدارة العليا"];
+const RECOMMENDATION_PRIORITIES = ["عاجلة", "عالية", "متوسطة", "منخفضة"];
 
-const api = {
-  async call(action, payload) {
-    const url = (typeof CONFIG !== "undefined" && CONFIG.API_URL) || "";
-    if (!url || url.indexOf("PASTE_") >= 0) {
-      const err = new Error("لم يُضبط رابط الخادم (API_URL) في ملف config.js"); err.code = "CONFIG"; throw err;
-    }
-    const token = S.session && S.session.token ? S.session.token : "";
-    let res;
-    try {
-      // text/plain لتجنّب طلب preflight مع Apps Script
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action, token, payload: payload || {} }) });
-      res = await r.json();
-    } catch (e) {
-      const err = new Error("تعذر الاتصال بالخادم — تحققي من الإنترنت ثم أعيدي المحاولة"); err.code = "NETWORK"; throw err;
-    }
-    if (!res || !res.ok) {
-      const err = new Error((res && res.error) || "خطأ غير معروف من الخادم");
-      err.code = (res && res.code) || "ERR";
-      if (err.code === "AUTH") handleAuthExpired();
-      throw err;
-    }
-    return res.data;
-  },
-};
+const MOCK_USERS = [
+  { username: "admin", password: "admin123", role: "admin", name: "مديرة النظام" },
+  { username: "unit1", password: "1234", role: "user", name: "مسؤولة الوحدة", unitId: "seed-1" },
+];
 
-/* طابور الحفظ: يضمن ترتيب العمليات (إنشاء التقرير قبل حفظ أقسامه) ويعيد المحاولة عند انقطاع الشبكة */
-const sync = {
-  queue: [], running: false, paused: false, hadError: false, hideTimer: null,
-  push(action, payload) {
-    const p = new Promise((resolve, reject) => { this.queue.push({ action, payload, resolve, reject, tries: 0 }); });
-    p.catch(() => {});
-    this.paused = false; this.hadError = false;
-    this.pill("saving");
-    this.run();
-    return p;
-  },
-  async run() {
-    if (this.running) return;
-    this.running = true;
-    while (this.queue.length && !this.paused) {
-      const job = this.queue[0];
-      try {
-        await api.call(job.action, job.payload);
-        this.queue.shift(); job.resolve(true);
-      } catch (e) {
-        if (e.code === "NETWORK" && job.tries < 3) { job.tries++; await new Promise((r) => setTimeout(r, 1500 * job.tries)); continue; }
-        if (e.code === "NETWORK") { this.paused = true; this.hadError = true; this.pill("error", e.message); break; }
-        this.queue.shift(); job.reject(e);
-        this.hadError = true; this.pill("error", e.message, true);
-        resyncSoon();
-      }
-    }
-    this.running = false;
-    if (!this.queue.length && !this.hadError) this.pill("saved");
-  },
-  retryNow() { this.paused = false; this.hadError = false; this.pill("saving"); this.run(); },
-  pill(state, msg, temp) {
-    const el = document.getElementById("sync-pill");
-    if (!el) return;
-    clearTimeout(this.hideTimer);
-    el.className = "sync-pill " + state;
-    if (state === "saving") el.textContent = "جارِ الحفظ…";
-    else if (state === "saved") { el.textContent = "تم الحفظ ✓"; this.hideTimer = setTimeout(() => { el.className = "sync-pill hidden"; }, 1800); }
-    else {
-      el.textContent = "⚠ " + (msg || "تعذر الحفظ") + (this.paused ? " — اضغطي هنا لإعادة المحاولة" : "");
-      if (temp) this.hideTimer = setTimeout(() => { el.className = "sync-pill hidden"; }, 7000);
-    }
-  },
-  flash(msg, isError) {
-    const el = document.getElementById("sync-pill");
-    if (!el) return;
-    clearTimeout(this.hideTimer);
-    el.className = "sync-pill " + (isError ? "error" : "saved");
-    el.textContent = msg;
-    this.hideTimer = setTimeout(() => { el.className = "sync-pill hidden"; }, 2400);
-  },
-};
-window.addEventListener("beforeunload", (e) => { if (sync.queue.length) { e.preventDefault(); e.returnValue = ""; } });
+/* =============================== Storage layer ============================= */
+const UNITS_KEY = "prs:units", DEPARTMENTS_KEY = "prs:departments",
+      INDICATOR_DEFINITIONS_KEY = "prs:indicator-definitions", GOALS_DEFINITIONS_KEY = "prs:goals-definitions";
+const reportKey = (unitId) => `prs:report:${unitId}`;
+const reportsKey = (unitId) => `prs:reports:${unitId}`;
 
-let resyncTimer = null;
-function resyncSoon() {
-  clearTimeout(resyncTimer);
-  resyncTimer = setTimeout(() => { refreshData(true).catch(() => {}); }, 1500);
+function lsGet(key) { const v = localStorage.getItem(key); return v != null ? v : null; }
+function lsSet(key, value) { localStorage.setItem(key, value); }
+function lsDelete(key) { localStorage.removeItem(key); }
+
+function seedDepartments() {
+  return [
+    { id: "dept-1", name: "المراكز", status: "active", createdAt: Date.now() },
+    { id: "dept-2", name: "قسم شؤون المكاتب", status: "active", createdAt: Date.now() },
+  ];
 }
-function applyBootstrap(data) {
-  S.units = data.units || [];
-  S.departments = data.departments || [];
-  S.indicatorDefinitions = data.indicatorDefinitions || [];
-  S.goalsDefinitions = data.goalsDefinitions || { strategic: [], operational: [] };
-  S.reports = data.reports || {};
+function seedUnits() {
+  return [
+    { id: "seed-1", name: "وحدة الاختبارات", status: "active", departmentId: "dept-2", createdAt: Date.now() },
+    { id: "seed-2", name: "وحدة الإشراف التربوي", status: "active", departmentId: "dept-2", createdAt: Date.now() },
+  ];
 }
-async function refreshData(silent) {
-  if (!S.session || sync.queue.length || sync.running) return false;
-  const data = await api.call("bootstrap");
-  if (sync.queue.length || sync.running) return false; // وصلت تعديلات جديدة أثناء التحميل
-  applyBootstrap(data);
-  S.lastLoad = Date.now();
-  if (!(silent && S.view === "unit-report" && S.activeSectionId)) render();
-  return true;
+function emptyReport() { return { sections: {}, shared: {}, indicatorHistory: {} }; }
+
+const SAMPLE_INDICATOR_DEFINITIONS = [
+  { name: "نسبة إنجاز الاختبارات", category: "كفاءة", direction: "تصاعدي: الارتفاع أفضل", nature: "تراكمي", frequency: "شهري", unit: "نسبة", target: 100, dataSource: "نظام الاختبارات الإلكتروني", calculationMethod: "عدد الاختبارات المُنجزة ÷ عدد الاختبارات المخطط لها × 100" },
+  { name: "رضا المستفيدات عن الخدمة", category: "رضا", direction: "تصاعدي: الارتفاع أفضل", nature: "غير تراكمي", frequency: "ربع سنوي", unit: "نسبة", target: 90, dataSource: "استبيان الرضا الفصلي", calculationMethod: "متوسط تقييمات الاستبيان" },
+  { name: "زمن الاستجابة لطلبات الدعم", category: "زمن إنجاز", direction: "تنازلي: الانخفاض أفضل", nature: "غير تراكمي", frequency: "أسبوعي", unit: "مدة", target: 24, dataSource: "نظام التذاكر", calculationMethod: "متوسط زمن إغلاق التذكرة بالساعات" },
+  { name: "معدل استكمال البرامج التدريبية", category: "إنتاجية", direction: "تصاعدي: الارتفاع أفضل", nature: "تراكمي", frequency: "فصلي", unit: "نسبة", target: 85, dataSource: "نظام إدارة التدريب", calculationMethod: "عدد المستكملات ÷ عدد المسجلات × 100" },
+  { name: "عدد المبادرات النوعية المنفذة", category: "نمو", direction: "تصاعدي: الارتفاع أفضل", nature: "تراكمي", frequency: "سنوي", unit: "عدد", target: 6, dataSource: "تقارير المبادرات", calculationMethod: "عدّ المبادرات المعتمدة والمنفذة فعليًا" },
+];
+function buildSampleKPIRows() {
+  return [
+    { id: "kpi-sample-1", name: "نسبة إنجاز الاختبارات", actual: 95 },
+    { id: "kpi-sample-2", name: "رضا المستفيدات عن الخدمة", actual: 92 },
+    { id: "kpi-sample-3", name: "زمن الاستجابة لطلبات الدعم", actual: 40, deviationReason: "ازدحام غير متوقع في التذاكر خلال فترة الاختبارات", causeType: "خارجي", correctiveAction: "إضافة نوبة دعم مسائية مؤقتة", responsiblePerson: "منسقة الدعم الفني" },
+    { id: "kpi-sample-4", name: "معدل استكمال البرامج التدريبية", actual: 68, deviationReason: "تعارض مواعيد التدريب مع فترة الاختبارات", causeType: "داخلي", correctiveAction: "إعادة جدولة الدفعة المتبقية بعد نهاية الاختبارات", responsiblePerson: "منسقة التدريب" },
+    { id: "kpi-sample-5", name: "عدد المبادرات النوعية المنفذة", actual: "" },
+  ].map((row) => ({ deviationReason: "", causeType: "", correctiveAction: "", responsiblePerson: "", closureDate: "", requiredSupport: "", ...row }));
 }
-function handleAuthExpired() {
-  clearSession(); sync.queue = [];
-  S.session = null; S.currentUser = null; S.view = "login";
-  S.ui = { loginError: "انتهت الجلسة — سجّلي الدخول من جديد" };
-  render(); loadLoginList();
+function buildSampleIndicatorHistory() {
+  const t = Date.now() - 5000000;
+  return {
+    "نسبة إنجاز الاختبارات": [{ value: 88, period: "شهري · 1446هـ", savedAt: t }],
+    "رضا المستفيدات عن الخدمة": [{ value: 85, period: "ربع سنوي · 1446هـ", savedAt: t }],
+    "زمن الاستجابة لطلبات الدعم": [{ value: 30, period: "أسبوعي · 1446هـ", savedAt: t }],
+    "معدل استكمال البرامج التدريبية": [{ value: 72, period: "فصلي · 1446هـ", savedAt: t }],
+  };
 }
 
 const dataStore = {
-  saveDepartments(list) { return sync.push("saveDepartments", { list }); },
-  saveUnits(list) { return sync.push("saveUnits", { list }); },
-  saveIndicatorDefinitions(list) { return sync.push("saveIndicatorDefs", { list }); },
-  addIndicatorDefinition(def) { return sync.push("addIndicatorDef", { def }); },
-  saveGoalsDefinitions(value) { return sync.push("saveGoalDefs", { value }); },
-  deleteReports(unitId) { return sync.push("deleteUnitReports", { unitId }); },
+  getDepartments() { const v = lsGet(DEPARTMENTS_KEY); if (v) return JSON.parse(v); const seed = seedDepartments(); lsSet(DEPARTMENTS_KEY, JSON.stringify(seed)); return seed; },
+  saveDepartments(d) { lsSet(DEPARTMENTS_KEY, JSON.stringify(d)); },
+  getUnits() { const v = lsGet(UNITS_KEY); if (v) return JSON.parse(v); const seed = seedUnits(); lsSet(UNITS_KEY, JSON.stringify(seed)); return seed; },
+  saveUnits(u) { lsSet(UNITS_KEY, JSON.stringify(u)); },
+  getIndicatorDefinitions() { const v = lsGet(INDICATOR_DEFINITIONS_KEY); return v ? JSON.parse(v) : []; },
+  saveIndicatorDefinitions(d) { lsSet(INDICATOR_DEFINITIONS_KEY, JSON.stringify(d)); },
+  getGoalsDefinitions() { const v = lsGet(GOALS_DEFINITIONS_KEY); return v ? JSON.parse(v) : { strategic: [], operational: [] }; },
+  saveGoalsDefinitions(d) { lsSet(GOALS_DEFINITIONS_KEY, JSON.stringify(d)); },
+  // Each unit now holds a LIST of report entries (one per period/submission),
+  // each carrying its own status: draft / under_review / completed.
+  // A unit that only ever had the old single-report shape (prs:report:<id>)
+  // is migrated automatically into a one-item list the first time it's read.
+  getReports(unitId) {
+    const v = lsGet(reportsKey(unitId));
+    if (v) return JSON.parse(v);
+    const legacy = lsGet(reportKey(unitId));
+    if (legacy) {
+      const old = JSON.parse(legacy);
+      const progress = computeProgress(old);
+      const status = progress.total > 0 && progress.completed === progress.total ? "completed" : "draft";
+      const migrated = [{ id: uid("rep"), label: "التقرير الأول", status, createdAt: Date.now(), updatedAt: Date.now(),
+        sections: old.sections || {}, shared: old.shared || {}, indicatorHistory: old.indicatorHistory || {} }];
+      lsSet(reportsKey(unitId), JSON.stringify(migrated));
+      return migrated;
+    }
+    return [];
+  },
+  saveReports(unitId, list) { lsSet(reportsKey(unitId), JSON.stringify(list)); },
+  deleteReports(unitId) { lsDelete(reportsKey(unitId)); lsDelete(reportKey(unitId)); },
 };
-
-function emptyReport() { return { sections: {}, shared: {}, indicatorHistory: {} }; }
 
 /* ---- Multi-report helpers (operate on S.reports[unitId] = array) ---------- */
 function ensureUnitReportsLoaded(unitId) {
-  if (!S.reports[unitId]) S.reports[unitId] = [];
+  if (!S.reports[unitId]) S.reports[unitId] = dataStore.getReports(unitId);
   return S.reports[unitId];
 }
 function latestReportForUnit(unitId) {
@@ -292,20 +247,17 @@ function getCurrentReportEntry() {
   if (!S.currentUnitId) return null;
   return getReportEntry(S.currentUnitId, S.currentReportId) || null;
 }
-// تحديث محلي فقط — الإرسال للخادم يتم عبر sync.push في مكان الاستدعاء
 function saveReportEntry(unitId, updatedEntry) {
-  S.reports[unitId] = ensureUnitReportsLoaded(unitId).map((r) => (r.id === updatedEntry.id ? updatedEntry : r));
+  const list = ensureUnitReportsLoaded(unitId).map((r) => (r.id === updatedEntry.id ? updatedEntry : r));
+  S.reports[unitId] = list;
+  dataStore.saveReports(unitId, list);
 }
 function createNewReportEntry(unitId) {
   const list = ensureUnitReportsLoaded(unitId);
   const entry = { id: uid("rep"), label: `تقرير ${list.length + 1}`, status: "draft", createdAt: Date.now(), updatedAt: Date.now(), sections: {}, shared: {}, indicatorHistory: {} };
   S.reports[unitId] = [...list, entry];
-  sync.push("createReport", { unitId, report: { id: entry.id, label: entry.label, createdAt: entry.createdAt } });
+  dataStore.saveReports(unitId, S.reports[unitId]);
   return entry;
-}
-function setReportStatus(unitId, entry, status) {
-  saveReportEntry(unitId, { ...entry, status, updatedAt: Date.now() });
-  return sync.push("updateReport", { reportId: entry.id, status });
 }
 function reportStatusMeta(status) {
   if (status === "completed") return { label: "مكتمل", color: GREEN, bg: GREEN_BG };
@@ -316,7 +268,7 @@ function reportStatusMeta(status) {
 /* =============================== Helpers ==================================== */
 function computeProgress(report) {
   const total = SECTIONS.length;
-  const completed = SECTIONS.filter((s) => sectionStatus(report, s.id) === "completed").length;
+  const completed = SECTIONS.filter((s) => report?.sections?.[s.id]?.status === "completed").length;
   const drafted = SECTIONS.filter((s) => report?.sections?.[s.id]?.status === "draft").length;
   return { completed, drafted, total, percent: total ? Math.round((completed / total) * 100) : 0 };
 }
@@ -325,10 +277,7 @@ function statusMeta(status) {
   if (status === "draft") return { label: "مسودة", color: GOLD, bg: GOLD_BG };
   return { label: "لم يبدأ", color: SUBTLE, bg: GRAY_BG };
 }
-function sectionStatus(report, sectionId) {
-  if (sectionId === "review" && report?.status === "completed") return "completed";
-  return report?.sections?.[sectionId]?.status || "not_started";
-}
+function sectionStatus(report, sectionId) { return report?.sections?.[sectionId]?.status || "not_started"; }
 function computePhaseProgress(report, phase) {
   const total = phase.sectionIds.length;
   const completed = phase.sectionIds.filter((id) => sectionStatus(report, id) === "completed").length;
@@ -342,9 +291,6 @@ function uid(prefix) { return `${prefix}-${Date.now()}-${Math.floor(Math.random(
 
 /* =============================== Global state ================================ */
 const S = {
-  session: null,
-  users: [],
-  lastLoad: 0,
   currentUser: null,
   units: [],
   departments: [],
@@ -377,9 +323,7 @@ const appEl = document.getElementById("app");
 
 function render() {
   let html = "";
-  if (S.view === "loading") {
-    html = renderLoading();
-  } else if (S.view === "login" || !S.currentUser) {
+  if (S.view === "login" || !S.currentUser) {
     html = renderLogin();
   } else if (S.view === "dashboard") {
     html = shellWrap(renderDashboard());
@@ -393,10 +337,6 @@ function render() {
     html = shellWrap(renderIndicatorsManage());
   } else if (S.view === "goals-manage") {
     html = shellWrap(renderGoalsManage());
-  } else if (S.view === "users-manage") {
-    html = shellWrap(renderUsersManage());
-  } else if (S.view === "final-report") {
-    html = shellWrap(renderFinalReport());
   } else if (S.view === "unit-reports") {
     html = shellWrap(renderUnitReportsHub());
   } else if (S.view === "unit-report") {
@@ -435,8 +375,6 @@ const SIDEBAR_PAGES = [
   { id: "units-manage", label: "إدارة الأقسام والوحدات", group: "إدارة التقارير", icon: "building" },
   { id: "indicators-manage", label: "إدارة مؤشرات الأداء", group: "إدارة التقارير", icon: "gauge" },
   { id: "goals-manage", label: "إدارة الأهداف والمستهدفات", group: "إدارة التقارير", icon: "target" },
-  { id: "users-manage", label: "إدارة المستخدمين", group: "إدارة التقارير", icon: "user" },
-  { id: "final-report", label: "تقرير الإدارة النهائي", group: "إدارة التقارير", icon: "layers" },
   { id: "unit-reports", label: "تقاريري", group: "التقارير", scope: "unit", icon: "document" },
   { id: "unit-report", label: "متابعة التقرير المفتوح", group: "التقارير", scope: "unitreport", icon: "pencil" },
   { id: "full-report", label: "عرض التقرير كاملاً", group: "التقارير", scope: "unitreport", icon: "layers" },
@@ -444,7 +382,7 @@ const SIDEBAR_PAGES = [
 ];
 const SIDEBAR_GROUPS = ["الرئيسية", "إدارة التقارير", "التقارير"];
 function sidebarNavIcon(key, size, color) {
-  const map = { user: iconUser, home: iconHome, document: iconDocument, building: iconBuilding, gauge: iconGauge, target: iconTarget, pencil: iconPencil, layers: iconLayers, printer: iconPrinter };
+  const map = { home: iconHome, document: iconDocument, building: iconBuilding, gauge: iconGauge, target: iconTarget, pencil: iconPencil, layers: iconLayers, printer: iconPrinter };
   const fn = map[key] || iconDocument;
   return key === "building" || key === "gauge" ? fn(color, size) : fn(size, color);
 }
@@ -507,7 +445,6 @@ function renderMainSidebar(mobile) {
     <div class="sidebar-tagline">تقارير دقيقة.. لأثر أكبر</div>
     <div class="sidebar-spacer"></div>
     <div class="sidebar-sep"></div>
-    <button class="logout-btn" style="color:${INK};" data-action="refresh-data">${iconRefresh(16, INK)} تحديث البيانات</button>
     <button class="logout-btn" data-action="logout">${iconLogout(16, ROSE)} تسجيل الخروج</button>
   `;
 
@@ -542,7 +479,6 @@ const iconCheckCircle = (s, c) => svgIcon(`<path d="M22 11.08V12a10 10 0 1 1-5.9
 const iconCircle = (s, c) => svgIcon(`<circle cx="12" cy="12" r="9"/>`, s || 14, c);
 const iconEye = (s, c) => svgIcon(`<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`, s || 16, c || SUBTLE);
 const iconEyeOff = (s, c) => svgIcon(`<path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 4.22-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>`, s || 16, c || SUBTLE);
-const iconRefresh = (s, c) => svgIcon(`<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>`, s || 16, c || INK);
 const iconUser = (s, c) => svgIcon(`<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`, s || 16, c || SUBTLE);
 const iconLogin = (s, c) => svgIcon(`<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>`, s || 17, c);
 const iconSave = (s, c) => svgIcon(`<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>`, s || 15, c);
@@ -604,43 +540,24 @@ function badgeHtml(label, color, bg) {
 }
 
 /* =============================== Login ======================================= */
-function renderLoading() {
-  return `
-  <div class="login-wrap">
-    <div class="login-box">
-      <div class="login-card" style="text-align:center;padding:38px 20px;">
-        <img class="login-logo" src="${ASSOCIATION_LOGO}" alt="جمعية فرقان" />
-        <div style="font-size:13px;color:${SUBTLE};margin-top:14px;">جارِ تحميل البيانات…</div>
-      </div>
-    </div>
-  </div>`;
-}
-
 function renderLogin() {
   const err = S.ui.loginError || "";
   const showPw = !!S.ui.loginShowPw;
-  const users = S.ui.loginUsers;
-  const userField = users && users.length
-    ? `<select class="input" id="login-username" required>
-         <option value="">اختاري اسم المستخدم</option>
-         ${users.map((u) => `<option value="${esc(u.username)}" ${u.username === S.ui.loginUsername ? "selected" : ""}>${esc(u.name)}${u.name !== u.username ? " — " + esc(u.username) : ""}</option>`).join("")}
-       </select>`
-    : `<div class="input-icon-wrap">
-         <span class="input-icon-right">${iconUser()}</span>
-         <input class="input" style="padding-right:38px" id="login-username" placeholder="${S.ui.loginUsersLoading ? "جارِ تحميل الحسابات…" : "اسم المستخدم"}" value="${esc(S.ui.loginUsername || "")}" required />
-       </div>`;
   return `
   <div class="login-wrap">
     <div class="login-box">
       <div class="login-card">
         <div style="text-align:center;margin-bottom:26px;">
           <img class="login-logo" src="${ASSOCIATION_LOGO}" alt="جمعية فرقان" />
-          <div class="prs-title" style="font-size:21px;font-weight:900;color:${ROSE}">نظام توثيق الأداء</div>
+          <div class="prs-title" style="font-size:21px;font-weight:900;color:#000">نظام توثيق الأداء</div>
           <div style="font-size:11.5px;color:${SUBTLE};margin-top:4px;">جمعية فرقان لتحفيظ القرآن الكريم بالطائف</div>
-          <div style="font-size:12px;font-weight:700;color:${ROSE};margin-top:10px;">تقارير دقيقة.. لأثر أكبر</div>
         </div>
         <form id="login-form">
-          ${fieldWrap("اسم المستخدم", true, userField)}
+          ${fieldWrap("اسم المستخدم", true, `
+            <div class="input-icon-wrap">
+              <span class="input-icon-right">${iconUser()}</span>
+              <input class="input" style="padding-right:38px" id="login-username" placeholder="اسم المستخدم" required />
+            </div>`)}
           ${fieldWrap("كلمة السر", true, `
             <div class="input-icon-wrap">
               <input class="input" style="padding-left:38px" id="login-password" type="${showPw ? "text" : "password"}" placeholder="كلمة السر" required />
@@ -650,114 +567,46 @@ function renderLogin() {
           <button type="submit" class="submit-btn">${iconLogin(17, "#fff")} تسجيل الدخول</button>
         </form>
       </div>
+      <div class="login-hint">بيانات تجريبية للاختبار — مديرة النظام: admin / admin123 — موظفة وحدة: unit1 / 1234</div>
     </div>
   </div>`;
 }
 
-async function loadLoginList() {
-  S.ui.loginUsersLoading = true;
-  try { S.ui.loginUsers = await api.call("loginList"); }
-  catch (e) { S.ui.loginUsers = null; if (!S.ui.loginError) S.ui.loginError = e.message; }
-  S.ui.loginUsersLoading = false;
-  if (S.view === "login" && !S.currentUser) {
-    // لا نعيد الرسم إن بدأت المستخدمة بكتابة كلمة السر
-    const pw = document.getElementById("login-password");
-    if (!pw || !pw.value) render();
-  }
-}
-
-async function handleLoginSubmit() {
+function handleLoginSubmit() {
   const username = document.getElementById("login-username").value.trim();
   const password = document.getElementById("login-password").value;
-  const btn = document.querySelector("#login-form .submit-btn");
-  if (!username) { S.ui.loginError = "اختاري اسم المستخدم"; render(); return; }
-  if (btn) { btn.disabled = true; btn.style.opacity = "0.7"; btn.textContent = "جارِ الدخول…"; }
-  S.ui.loginUsername = username;
-  try {
-    const res = await api.call("login", { username, password });
-    S.session = { token: res.token, user: res.user };
-    writeSession(S.session);
-    const data = await api.call("bootstrap");
-    applyBootstrap(data);
-    S.lastLoad = Date.now();
-    S.ui = {};
-    doLogin(data.user || res.user);
-  } catch (e) {
-    S.ui.loginError = e.message;
-    render();
-  }
+  const match = MOCK_USERS.find((u) => u.username === username && u.password === password);
+  if (!match) { S.ui.loginError = "اسم المستخدم أو كلمة السر غير صحيحة"; render(); return; }
+  S.ui.loginError = "";
+  doLogin(match);
 }
 
 function doLogin(user) {
   S.currentUser = user;
   S.isAdmin = user.role === "admin";
+  S.units = dataStore.getUnits();
+  S.departments = dataStore.getDepartments();
+  S.indicatorDefinitions = dataStore.getIndicatorDefinitions();
+  S.goalsDefinitions = dataStore.getGoalsDefinitions();
   S.sidebarOpen = !isMobileViewport();
   if (S.isAdmin) {
+    const reports = {};
+    S.units.forEach((u) => { reports[u.id] = dataStore.getReports(u.id); });
+    S.reports = reports;
     S.view = "dashboard";
   } else {
-    S.currentUnitId = user.unitId;
+    const unitId = user.unitId;
+    S.reports[unitId] = dataStore.getReports(unitId);
+    S.currentUnitId = unitId;
     S.currentReportId = null;
-    ensureUnitReportsLoaded(user.unitId);
     S.view = "unit-reports";
   }
   render();
 }
 
 function doLogout() {
-  if (sync.queue.length && !confirm("توجد تعديلات لم تُحفظ بعد على الخادم. هل تريدين الخروج؟")) return;
-  clearSession(); sync.queue = [];
-  S.session = null; S.currentUser = null; S.currentUnitId = null; S.currentReportId = null;
-  S.activeSectionId = null; S.sectionDraft = null; S.view = "login"; S.ui = {};
-  S.units = []; S.departments = []; S.reports = {};
-  render(); loadLoginList();
-}
-
-/* =============================== Users management (admin) ==================== */
-async function loadUsers() {
-  S.ui.usersLoading = true; S.ui.usersError = "";
+  S.currentUser = null; S.currentUnitId = null; S.view = "login"; S.ui = {};
   render();
-  try { S.users = await api.call("listUsers"); }
-  catch (e) { S.ui.usersError = e.message; }
-  S.ui.usersLoading = false;
-  if (S.view === "users-manage") render();
-}
-
-function renderUsersManage() {
-  const ui = S.ui;
-  const unitOptions = S.units.map((u) => `<option value="${esc(u.id)}">${esc(u.name)}</option>`).join("");
-  const rows = (S.users || []).map((u) => {
-    const unit = S.units.find((x) => x.id === u.unitId);
-    return `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;opacity:${u.active ? 1 : 0.6}">
-      <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-        <div style="width:34px;height:34px;border-radius:10px;background:${DANGER_BG};display:flex;align-items:center;justify-content:center;">${iconUser(16, ROSE)}</div>
-        <div style="min-width:0;">
-          <div style="font-size:13.5px;font-weight:700;">${esc(u.name)} <span style="font-size:11px;color:${SUBTLE};font-weight:500;">(${esc(u.username)})</span></div>
-          <div style="font-size:11px;color:${SUBTLE};">${u.role === "admin" ? "مديرة النظام" : "مسؤولة وحدة — " + esc(unit ? unit.name : "وحدة غير معروفة")}${u.active ? "" : " — معطّل"}</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:6px;align-items:center;">
-        ${pillBtn("كلمة سر جديدة", { variant: "ghost", action: "user-set-password", data: { username: u.username } })}
-        <button class="icon-btn" style="width:32px;height:32px;background:${u.active ? DANGER_BG : GREEN_BG}" data-action="toggle-user" data-username="${esc(u.username)}" title="${u.active ? "تعطيل" : "تفعيل"}">${iconPower(14, u.active ? DANGER : GREEN)}</button>
-        <button class="icon-btn" style="width:32px;height:32px;border:1px solid ${BORDER}" data-action="delete-user" data-username="${esc(u.username)}" title="حذف">${iconTrash(14, DANGER)}</button>
-      </div>
-    </div>`;
-  }).join("");
-  return `
-  <div class="page-wrap"><div class="page-inner narrow">
-    ${topBarHtml({ title: "إدارة المستخدمين", subtitle: "حسابات الدخول — تُحفظ في ورقة \"المستخدمون\" بملف Google Sheets", backAction: "nav-back-admin" })}
-    <div class="card" style="margin-bottom:18px;">
-      <div style="font-size:12.5px;font-weight:800;color:${ROSE};margin-bottom:12px;">إضافة حساب جديد</div>
-      ${fieldWrap("اسم المستخدم", true, `<input class="input" id="new-user-username" placeholder="مثال: unit2" autocomplete="off" />`)}
-      ${fieldWrap("كلمة السر", true, `<input class="input" id="new-user-password" placeholder="كلمة السر" autocomplete="off" />`)}
-      ${fieldWrap("الاسم الظاهر", `<input class="input" id="new-user-name" placeholder="مثال: مسؤولة وحدة الإشراف" />`)}
-      ${fieldWrap("نوع الحساب", `<select class="input" id="new-user-role"><option value="user">مسؤولة وحدة</option><option value="admin">مديرة النظام</option></select>`)}
-      ${fieldWrap("الوحدة (لمسؤولة الوحدة)", `<select class="input" id="new-user-unit"><option value="">اختاري الوحدة</option>${unitOptions}</select>`)}
-      ${ui.usersError ? `<div class="error-box" style="margin-bottom:10px;">${esc(ui.usersError)}</div>` : ""}
-      ${pillBtn("إضافة الحساب", { icon: iconPlus(15, "#fff"), action: "add-user" })}
-    </div>
-    <div style="font-size:12.5px;font-weight:800;color:${ROSE};margin-bottom:10px;">الحسابات (${(S.users || []).length})</div>
-    ${ui.usersLoading ? `<div class="hint">جارِ التحميل…</div>` : `<div style="display:flex;flex-direction:column;gap:8px;">${rows || `<div class="hint">لا توجد حسابات.</div>`}</div>`}
-  </div></div>`;
 }
 
 /* =============================== Dashboard (admin) =========================== */
@@ -1260,6 +1109,11 @@ function renderIndicatorsManage() {
   <div class="page-wrap"><div class="page-inner narrow">
     ${topBarHtml({ title: "إدارة مؤشرات الأداء", subtitle: "عرّفي بيانات المؤشر مرة واحدة — لن تحتاج إعادة كتابتها داخل التقارير", backAction: "nav-back-admin" })}
 
+    <div class="card" style="background:${BLUE_BG};border:1px solid #cfe0f5;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <div style="font-size:11.5px;color:#3a5a85;">لتجربة الواجهة سريعًا: حمّلي 5 مؤشرات تجريبية بحالات مختلفة على "وحدة الاختبارات".</div>
+      ${pillBtn(ui.sampleStatus || "تحميل بيانات تجريبية", { variant: "soft", icon: iconSparkles(15, GREEN), action: "load-sample-data" })}
+    </div>
+
     <div class="card" style="margin-bottom:22px;">
       <div style="font-size:12.5px;font-weight:800;color:${ROSE};margin-bottom:12px;">إضافة مؤشر جديد</div>
       ${indicatorDefFieldsHtml("new-ind", ui.newIndicatorForm || {})}
@@ -1555,7 +1409,7 @@ function trySaveSection(status) {
 function persistSection(sectionId, data, status) {
   const unitId = S.currentUnitId;
   const current = getCurrentReportEntry();
-  if (!current) { S._lastSave = Promise.resolve(true); return S._lastSave; }
+  if (!current) return;
   const updatedSections = { ...current.sections, [sectionId]: { status, data, updatedAt: Date.now() } };
   let updatedShared = current.shared || {};
   if (sectionId === "basic") {
@@ -1570,16 +1424,12 @@ function persistSection(sectionId, data, status) {
     (data.indicators || []).forEach((row) => {
       if (!row.name || row.actual === "" || row.actual == null || isNaN(Number(row.actual))) return;
       const existing = nextHistory[row.name] || [];
-      const lastEntry = existing[existing.length - 1];
-      if (lastEntry && lastEntry.value === Number(row.actual) && lastEntry.period === periodLabel) return;
       nextHistory[row.name] = [...existing, { value: Number(row.actual), period: periodLabel, savedAt: Date.now() }];
     });
     updatedIndicatorHistory = nextHistory;
   }
   const updatedEntry = { ...current, sections: updatedSections, shared: updatedShared, indicatorHistory: updatedIndicatorHistory, updatedAt: Date.now() };
   saveReportEntry(unitId, updatedEntry);
-  S._lastSave = sync.push("saveSection", { reportId: current.id, unitId, sectionId, section: { status, data }, shared: updatedShared, indicatorHistory: updatedIndicatorHistory });
-  return S._lastSave;
 }
 
 function sectionEditorHtml(unit, report) {
@@ -1620,25 +1470,14 @@ function sectionEditorHtml(unit, report) {
       ${pillBtn("السابق", { variant: "ghost", action: "section-prev", disabled: sectionIndex <= 0 })}
       <div style="flex:1;">${pillBtn(S.sectionSaveStatus || "حفظ كمسودة", { variant: "soft", icon: iconSave(15, GREEN), action: "section-save-draft" })}</div>
       ${sectionIndex >= SECTIONS.length - 1
-        ? lastSectionActionsHtml(report)
+        ? (report.status === "draft"
+            ? pillBtn("إرسال للمراجعة", { icon: iconCheckCircle(15, "#fff"), action: "submit-report-for-review" })
+            : report.status === "under_review"
+            ? pillBtn("اعتماد كمكتمل", { icon: iconCheckCircle(15, "#fff"), action: "mark-report-completed" })
+            : pillBtn("مكتمل ✓", { variant: "soft", icon: iconCheckCircle(15, GREEN), disabled: true }))
         : `<button class="next-btn" data-action="section-next">التالي ${iconChevronLeft(15, "#fff")}</button>`}
     </div>
   </div>`;
-}
-
-function lastSectionActionsHtml(report) {
-  const st = report.status;
-  if (!S.isAdmin) {
-    if (st === "draft") return pillBtn("إرسال للمراجعة", { icon: iconCheckCircle(15, "#fff"), action: "submit-report-for-review" });
-    if (st === "under_review") return pillBtn("بانتظار الاعتماد", { variant: "soft", icon: iconCheckCircle(15, GOLD), disabled: true });
-    return pillBtn("مكتمل ✓", { variant: "soft", icon: iconCheckCircle(15, GREEN), disabled: true });
-  }
-  const parts = [];
-  if (st !== "draft") parts.push(pillBtn("إعادة للتعديل", { variant: "ghost", action: "return-report-for-edit" }));
-  parts.push(st !== "completed"
-    ? pillBtn("اعتماد نهائي", { icon: iconCheckCircle(15, "#fff"), action: "mark-report-completed" })
-    : pillBtn("مكتمل ✓", { variant: "soft", icon: iconCheckCircle(15, GREEN), disabled: true }));
-  return parts.join("");
 }
 
 function notesFieldHtml(d) {
@@ -1653,20 +1492,14 @@ function renderSectionFields(section, d, unit, report) {
     case "goals": return goalsSectionHtml(d);
     case "programs": return programsSectionHtml(d);
     case "tools": return toolsSectionHtml(d);
-    case "analysis": {
-      const ready = analysisReadiness(report);
-      const hasOwn = d.summary || d.positiveResult || d.improvementResult || (d.comparisons || []).length;
-      return (ready.ok || hasOwn) ? analysisSectionHtml(d) : analysisLockedHtml(ready);
-    }
+    case "analysis": return analysisSectionHtml(d);
     case "strengths": return strengthsSectionHtml(d);
     case "challenges": return challengesSectionHtml(d);
     case "improvement": return improvementSectionHtml(d);
     case "initiatives": return initiativesSectionHtml(d);
     case "impact": return impactSectionHtml(d);
     case "recommendations": return recommendationsSectionHtml(d);
-    case "nextplan": return nextPlanSectionHtml(d);
-    case "evidence": return evidenceSectionHtml(d);
-    case "review": return reviewSectionHtml(d, report);
+    case "nextplan": return nextplanSectionHtml(d);
     default: return genericSectionHtml(section, d);
   }
 }
@@ -1677,211 +1510,6 @@ function genericSectionHtml(section, d) {
     ${notesFieldHtml(d)}`;
 }
 
-/* ---- الأثر وقصص النجاح ---- */
-function impactSectionHtml(d) {
-  const items = d.impacts || [];
-  const rows = items.map((it, i) => `
-    <div class="repeat-item">
-      <div class="repeat-item-head"><span class="repeat-item-title">قصة الأثر ${i + 1}</span>${removeBtn("impacts", it.id)}</div>
-      ${fieldWrap("نوع الأثر", true, sel("impacts", it.id, "impactType", it.impactType, IMPACT_TYPES, "اختاري نوع الأثر"))}
-      <div class="subhead">بناء قصة الأثر</div>
-      ${fieldWrap("عنوان مختصر", true, inp("impacts", it.id, "title", it.title, "عنوان قصة الأثر"))}
-      ${fieldWrap("وصف الوضع قبل التدخل", txt("impacts", it.id, "before", it.before))}
-      ${fieldWrap("التدخل أو البرنامج المنفذ", txt("impacts", it.id, "intervention", it.intervention))}
-      ${fieldWrap("التغير الذي حدث", txt("impacts", it.id, "change", it.change))}
-      ${fieldWrap("الدليل على التغير", txt("impacts", it.id, "evidence", it.evidence))}
-      ${fieldWrap("عدد المستفيدات", inp("impacts", it.id, "beneficiaries", it.beneficiaries, "0", "number"))}
-      ${fieldWrap("مدة ظهور الأثر", inp("impacts", it.id, "duration", it.duration, "مثال: بعد ثلاثة أشهر"))}
-      ${fieldWrap("هل الأثر مستمر؟", radio("impacts", it.id, "continuing", it.continuing, YES_NO_OPTIONS))}
-      ${fieldWrap("شهادة مستفيدة إن وجدت", txt("impacts", it.id, "testimonial", it.testimonial))}
-      ${fieldWrap("رابط الشاهد", inp("impacts", it.id, "evidenceLink", it.evidenceLink, "https://..."))}
-      ${fieldWrap("هل يسمح بعرض القصة في التقرير العام؟", radio("impacts", it.id, "allowPublic", it.allowPublic, YES_NO_OPTIONS))}
-    </div>`).join("");
-  return `${pillBtn("إضافة قصة أثر", { variant: "ghost", icon: iconPlus(15, ROSE), action: "add-item", data: { arr: "impacts" } })}<div style="margin:14px 0;">${rows}</div>${notesFieldHtml(d)}`;
-}
-
-/* ---- التوصيات ---- */
-function recommendationsSectionHtml(d) {
-  const items = d.recommendations || [];
-  const rows = items.map((it, i) => `
-    <div class="repeat-item">
-      <div class="repeat-item-head"><span class="repeat-item-title">التوصية ${i + 1}</span>${removeBtn("recommendations", it.id)}</div>
-      ${fieldWrap("مصدر التوصية", true, expandableSelectHtml("source", it.source, RECOMMENDATION_SOURCES, d.customRecommendationSources || [], "اختاري مصدر التوصية", "أخرى", "recommendations", it.id))}
-      ${fieldWrap("مستوى التوصية", true, sel("recommendations", it.id, "level", it.level, RECOMMENDATION_LEVELS, "اختاري مستوى التوصية"))}
-      <div class="subhead">بيانات التوصية</div>
-      ${fieldWrap("نص التوصية", true, txt("recommendations", it.id, "text", it.text, "اكتبي التوصية بوضوح"))}
-      ${fieldWrap("الدليل الذي بنيت عليه", txt("recommendations", it.id, "basedOn", it.basedOn))}
-      ${fieldWrap("النتيجة المتوقعة", txt("recommendations", it.id, "expectedResult", it.expectedResult))}
-      ${fieldWrap("أولوية التوصية", radio("recommendations", it.id, "priority", it.priority, IMPROVEMENT_PRIORITY_OPTIONS))}
-      ${fieldWrap("الجهة المسؤولة", inp("recommendations", it.id, "responsibleEntity", it.responsibleEntity))}
-      ${fieldWrap("الجهات المساندة", inp("recommendations", it.id, "supportingEntities", it.supportingEntities))}
-      ${fieldWrap("المدة المقترحة", inp("recommendations", it.id, "proposedDuration", it.proposedDuration, "مثال: ثلاثة أشهر"))}
-      ${fieldWrap("التكلفة المتوقعة", inp("recommendations", it.id, "expectedCost", it.expectedCost, "مثال: 3500 ريال أو بدون تكلفة"))}
-      ${fieldWrap("مؤشر تحقق التوصية", inp("recommendations", it.id, "successIndicator", it.successIndicator))}
-    </div>`).join("");
-  return `${pillBtn("إضافة توصية", { variant: "ghost", icon: iconPlus(15, ROSE), action: "add-item", data: { arr: "recommendations" } })}<div style="margin:14px 0;">${rows}</div>${notesFieldHtml(d)}`;
-}
-
-/* ---- خطة الفترة القادمة (من ٣ إلى ٥ أعمال رئيسة فقط) ---- */
-function nextPlanSectionHtml(d) {
-  const items = d.nextPlanItems || [];
-  const count = items.length;
-  const rows = items.map((it, i) => `
-    <div class="repeat-item">
-      <div class="repeat-item-head"><span class="repeat-item-title">العمل الرئيس ${i + 1}</span>${removeBtn("nextPlanItems", it.id)}</div>
-      ${fieldWrap("اسم العمل", true, inp("nextPlanItems", it.id, "name", it.name, "اسم العمل الرئيس"))}
-      ${fieldWrap("الهدف منه", txt("nextPlanItems", it.id, "goal", it.goal))}
-      ${fieldWrap("الفئة المستهدفة", inp("nextPlanItems", it.id, "targetGroup", it.targetGroup))}
-      ${fieldWrap("المسؤولة عن التنفيذ", inp("nextPlanItems", it.id, "responsiblePerson", it.responsiblePerson))}
-      <div class="row-flex">
-        ${fieldWrap("تاريخ البداية", inp("nextPlanItems", it.id, "startDate", it.startDate, "", "date"))}
-        ${fieldWrap("تاريخ النهاية", inp("nextPlanItems", it.id, "endDate", it.endDate, "", "date"))}
-      </div>
-      ${fieldWrap("المخرج المتوقع", txt("nextPlanItems", it.id, "expectedOutput", it.expectedOutput))}
-    </div>`).join("");
-  return `
-    <div class="hint" style="margin-bottom:12px;">تضيف الوحدة ثلاثة إلى خمسة أعمال رئيسة فقط (${count} من ${NEXT_PLAN_MAX}).</div>
-    ${count < NEXT_PLAN_MAX ? pillBtn("إضافة عمل رئيس", { variant: "ghost", icon: iconPlus(15, ROSE), action: "add-plan-item" }) : `<div class="hint">وصلتِ إلى الحد الأقصى (${NEXT_PLAN_MAX} أعمال).</div>`}
-    <div style="margin:14px 0;">${rows}</div>${notesFieldHtml(d)}`;
-}
-
-/* ---- الشواهد والمرفقات (روابط الملفات) ---- */
-function evidenceSectionHtml(d) {
-  const items = d.evidenceItems || [];
-  const rows = items.map((it, i) => `
-    <div class="repeat-item">
-      <div class="repeat-item-head"><span class="repeat-item-title">الشاهد ${i + 1}</span>${removeBtn("evidenceItems", it.id)}</div>
-      ${fieldWrap("نوع الشاهد", true, sel("evidenceItems", it.id, "fileType", it.fileType, EVIDENCE_FILE_TYPES, "اختاري نوع الشاهد"))}
-      <div class="subhead">بيانات الشاهد</div>
-      ${fieldWrap("اسم الشاهد", true, inp("evidenceItems", it.id, "name", it.name, "اسم الشاهد أو الملف"))}
-      ${fieldWrap("القسم المرتبط به", sel("evidenceItems", it.id, "relatedSection", it.relatedSection, SECTIONS.map((s) => s.label), "اختاري القسم"))}
-      ${fieldWrap("رابط الملف", inp("evidenceItems", it.id, "link", it.link, "https://... (رابط Google Drive مثلًا)"))}
-      ${fieldWrap("وصف مختصر", txt("evidenceItems", it.id, "description", it.description))}
-      ${fieldWrap("درجة السرية", radio("evidenceItems", it.id, "confidentiality", it.confidentiality, CONFIDENTIALITY_LEVELS))}
-    </div>`).join("");
-  return `<div class="hint" style="margin-bottom:12px;">لا تُدرَج الصور داخل التقرير؛ تُحفَظ في المستودع ويظهر رابطها فقط.</div>${pillBtn("إضافة شاهد", { variant: "ghost", icon: iconPlus(15, ROSE), action: "add-item", data: { arr: "evidenceItems" } })}<div style="margin:14px 0;">${rows}</div>${notesFieldHtml(d)}`;
-}
-
-/* ---- المراجعة والاعتماد (الإقرار والمراجعة): قائمة تحقق لمعدة التقرير + ملاحظات المديرة + مسار الاعتماد ---- */
-function checkRowHtml(i, label, checked, editable) {
-  return `<button type="button" class="check-row ${checked ? "on" : ""}" ${editable ? `data-action="toggle-check" data-idx="${i}"` : "disabled"}>
-    <span class="check-box">${checked ? "✓" : ""}</span><span>${esc(label)}</span></button>`;
-}
-function approvalPathHtml(status) {
-  const pos = status === "completed" ? APPROVAL_PATH.length + 1 : status === "under_review" ? 2 : 1;
-  return `<div style="display:flex;flex-direction:column;gap:8px;">${APPROVAL_PATH.map((t, i) => {
-    const n = i + 1, done = n < pos, cur = n === pos;
-    const bg = done ? GREEN : cur ? ROSE : GRAY_BG, fg = done || cur ? "#fff" : SUBTLE;
-    return `<div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:${done || cur ? INK : SUBTLE};font-weight:${cur ? 800 : 500};">
-      <span style="width:24px;height:24px;border-radius:50%;background:${bg};color:${fg};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex:none;">${done ? "✓" : n}</span>${esc(t)}</div>`;
-  }).join("")}</div>`;
-}
-function reviewSectionHtml(d, report) {
-  const meta = reportStatusMeta(report.status);
-  const checklist = d.checklist || {};
-  const canCheck = !S.isAdmin && report.status !== "completed";
-  const checks = REVIEW_CHECKLIST.map((label, i) => checkRowHtml(i, label, !!checklist[i], canCheck)).join("");
-  const reviewer = S.isAdmin
-    ? `${fieldWrap("قرار المديرة", sel(null, null, "decision", d.decision, REVIEW_DECISIONS, "اختاري القرار"))}
-       ${fieldWrap("ملاحظات نصية", txt(null, null, "reviewNotes", d.reviewNotes, "ملاحظات المديرة المباشرة على التقرير", 90))}
-       ${d.reviewerName ? `<div class="hint">آخر مراجعة: ${esc(d.reviewerName)}${d.reviewDate ? " — " + esc(d.reviewDate) : ""}</div>` : ""}`
-    : ((d.decision || d.reviewNotes)
-        ? `${fieldWrap("قرار المديرة", readonlyBox(d.decision || "—"))}${fieldWrap("ملاحظات نصية", readonlyBox(d.reviewNotes || "—"))}
-           ${d.reviewerName ? `<div class="hint">المراجِعة: ${esc(d.reviewerName)}${d.reviewDate ? " — " + esc(d.reviewDate) : ""}</div>` : ""}`
-        : `<div class="hint">لم تُسجَّل ملاحظات المديرة بعد — ستظهر هنا بعد مراجعة التقرير.</div>`);
-  return `
-    <div class="hint" style="margin-bottom:14px;">حالة التقرير الآن: ${badgeHtml(meta.label, meta.color, meta.bg)}</div>
-    <div class="subhead">قائمة التحقق</div>
-    <div class="hint" style="margin-bottom:8px;">تضع معدة التقرير علامة أمام:</div>
-    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:20px;">${checks}</div>
-    <div class="subhead">ملاحظات المديرة المباشرة</div>
-    ${reviewer}
-    <div class="subhead" style="margin-top:20px;">مسار اعتماد التقرير</div>
-    ${approvalPathHtml(report.status)}`;
-}
-
-function analysisReadiness(report) {
-  const hasIndicators = (report.sections?.kpi?.data?.indicators || []).some((r) => r.name && r.name !== NEW_INDICATOR_LABEL);
-  const hasTools = (report.sections?.tools?.data?.tools || []).length > 0;
-  return { hasIndicators, hasTools, ok: hasIndicators && hasTools };
-}
-function analysisLockedHtml(r) {
-  return `<div class="hint" style="line-height:1.9;">يظهر هذا القسم بعد إدخال مؤشرات الأداء وأدوات القياس.
-    <div>${r.hasIndicators ? "✓" : "○"} مؤشر أداء واحد على الأقل في قسم «مؤشرات الأداء»</div>
-    <div>${r.hasTools ? "✓" : "○"} أداة قياس واحدة على الأقل في قسم «أدوات القياس»</div></div>`;
-}
-
-function linkHtml(u) {
-  if (!u) return "—";
-  return /^https?:\/\//i.test(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">فتح الرابط</a>` : esc(u);
-}
-
-
-/* =============================== تقرير الإدارة النهائي (تجميع للمديرة) ========= */
-function renderFinalReport() {
-  const onlyApproved = S.ui.finalScope !== "all";
-  const rows = [];
-  S.units.forEach((u) => (S.reports[u.id] || []).forEach((r) => {
-    if (!onlyApproved || r.status === "completed") rows.push({ unit: u, dept: S.departments.find((d) => d.id === u.departmentId), report: r });
-  }));
-  const total = S.units.reduce((n, u) => n + (S.reports[u.id] || []).length, 0);
-  const sec = (title, body) => `<div class="doc-section prs-avoid-break"><div class="doc-section-title">${esc(title)}</div>${body}</div>`;
-  const flat = (key, listKey) => { const out = []; rows.forEach((x) => (x.report.sections?.[key]?.data?.[listKey] || []).forEach((it) => out.push({ ...it, _unit: x.unit.name }))); return out; };
-  const empty = emptyHint("لا توجد بيانات مطابقة بعد.");
-
-  // ١) المؤشرات والأرقام
-  const indRows = [];
-  rows.forEach((x) => (x.report.sections?.kpi?.data?.indicators || []).filter((r) => r.name).forEach((r) => {
-    const def = S.indicatorDefinitions.find((d) => d.name === r.name);
-    const st = computeIndicatorStatus(resolveIndicatorRow(r, def));
-    indRows.push([esc(x.unit.name), esc(r.name), esc(def && def.target !== "" ? def.target : "—"), esc(r.actual !== "" ? r.actual : "—"), `<span style="color:${st.color};font-weight:800;">${st.emoji} ${esc(st.label)}</span>`]);
-  }));
-  // ٢) مستوى أداء كل قسم ووحدة
-  const perf = rows.map((x) => {
-    const p = computeProgress(x.report);
-    const goals = []; (x.report.sections?.goals?.data?.goals || []).forEach((g) => (g.operationalGoals || []).forEach((og) => goals.push(og)));
-    const avg = goals.length ? Math.round(goals.reduce((s2, g) => s2 + (Number(g.percentage) || 0), 0) / goals.length) + "٪" : "—";
-    const inds = (x.report.sections?.kpi?.data?.indicators || []).filter((r) => r.name);
-    const ach = inds.filter((r) => computeIndicatorStatus(resolveIndicatorRow(r, S.indicatorDefinitions.find((d) => d.name === r.name))).key === "achieved").length;
-    const meta = reportStatusMeta(x.report.status);
-    return [esc(x.dept ? x.dept.name : "—"), esc(x.unit.name), esc(x.report.label), p.percent + "٪", avg, inds.length ? `${ach} من ${inds.length}` : "—", badgeHtml(meta.label, meta.color, meta.bg)];
-  });
-  // ٣) أعلى المنجزات أثرًا (المسموح عرضها فقط)
-  const impacts = flat("impact", "impacts").filter((i) => i.allowPublic === "نعم").sort((a, b) => (Number(b.beneficiaries) || 0) - (Number(a.beneficiaries) || 0)).slice(0, 5);
-  // ٤) نقاط القوة المشتركة (القابلة للنقل)
-  const strengths = flat("strengths", "strengths").filter((s2) => s2.transferable === "نعم");
-  const byArea = {}; strengths.forEach((s2) => { const k = s2.area || "غير محدد"; (byArea[k] = byArea[k] || []).push(s2); });
-  // ٥) الصعوبات المتكررة والخطيرة
-  const challenges = flat("challenges", "challenges").filter((c) => c.recurred === "نعم" || c.severity === "مرتفع" || c.severity === "حرج");
-  // ٦) التوصيات التي تحتاج قرار الإدارة
-  const recs = flat("recommendations", "recommendations").filter((r) => /قرار/.test(r.level || ""));
-  // ٧) المبادرات القابلة للتعميم
-  const inits = flat("initiatives", "initiatives").filter((i) => i.scalability === "نعم" || i.entryType === "نموذج قابل للتعميم");
-  // ٨) أولويات الفترة القادمة
-  const plans = flat("nextplan", "nextPlanItems").filter((p) => p.name);
-
-  return `
-  <div class="page-wrap"><div class="page-inner report">
-    <div class="no-print">${topBarHtml({ title: "تقرير الإدارة النهائي", subtitle: `تجميع ما ينتقيه النظام من تقارير الوحدات — ${rows.length} من ${total} تقرير`, backAction: "nav-back-admin",
-      right: pillBtn("طباعة", { variant: "ghost", icon: iconPrinter(15, INK), action: "print-page" }) })}
-      <div style="display:flex;gap:8px;margin-bottom:14px;">
-        ${pillBtn("المعتمدة فقط", { variant: onlyApproved ? "primary" : "ghost", action: "set-final-scope", data: { scope: "approved" } })}
-        ${pillBtn("كل التقارير", { variant: onlyApproved ? "ghost" : "primary", action: "set-final-scope", data: { scope: "all" } })}
-      </div>
-    </div>
-    <div class="card card-lg">
-      ${rows.length ? "" : `<div class="hint" style="margin-bottom:12px;">لا توجد تقارير معتمدة بعد — اعتمدي تقريرًا واحدًا على الأقل أو اختاري «كل التقارير».</div>`}
-      ${sec("١) المؤشرات والأرقام", indRows.length ? reportTable(["الوحدة", "المؤشر", "المستهدف", "المتحقق", "الحالة"], indRows) : empty)}
-      ${sec("٢) مستوى أداء كل قسم ووحدة", perf.length ? reportTable(["القسم", "الوحدة", "التقرير", "نسبة الإنجاز", "متوسط تحقق الأهداف", "المؤشرات المتحققة", "الحالة"], perf) : empty)}
-      ${sec("٣) أعلى المنجزات أثرًا", impacts.length ? reportTable(["الوحدة", "القصة", "نوع الأثر", "المستفيدات", "التغير الذي حدث"], impacts.map((i) => [esc(i._unit), esc(i.title || "—"), esc(i.impactType || "—"), esc(i.beneficiaries || "—"), esc(i.change || "—")])) : empty)}
-      ${sec("٤) نقاط القوة المشتركة", Object.keys(byArea).length ? reportTable(["المجال", "العدد", "نقاط القوة القابلة للنقل"], Object.keys(byArea).map((k) => [esc(k), byArea[k].length, esc(byArea[k].map((x) => `${x.name} (${x._unit})`).join("، "))])) : empty)}
-      ${sec("٥) الصعوبات المتكررة والخطيرة", challenges.length ? reportTable(["الوحدة", "الصعوبة", "المجال", "المستوى", "النطاق", "ما زالت قائمة؟"], challenges.map((c) => { const sm = challengeSeverityMeta(c.severity); return [esc(c._unit), esc(c.name || "—"), esc(c.area || "—"), c.severity ? badgeHtml(c.severity, sm.color, sm.bg) : "—", esc(c.scope || "—"), esc(c.stillOngoing || "—")]; })) : empty)}
-      ${sec("٦) التوصيات التي تحتاج قرار الإدارة", recs.length ? reportTable(["الوحدة", "التوصية", "المستوى", "الأولوية", "التكلفة المتوقعة"], recs.map((r) => { const pm = improvementPriorityMeta(r.priority); return [esc(r._unit), esc(r.text || "—"), esc(r.level || "—"), r.priority ? badgeHtml(r.priority, pm.color, pm.bg) : "—", esc(r.expectedCost || "—")]; })) : empty)}
-      ${sec("٧) المبادرات القابلة للتعميم", inits.length ? reportTable(["الوحدة", "المبادرة", "المرحلة", "المستفيدات", "الأثر المقاس"], inits.map((i) => [esc(i._unit), esc(i.name || "—"), esc(i.stage || "—"), esc(i.beneficiariesCount || "—"), esc(i.measuredImpact || "—")])) : empty)}
-      ${sec("٨) أولويات الفترة القادمة", plans.length ? reportTable(["الوحدة", "العمل الرئيس", "الهدف", "المسؤولة", "من", "إلى"], plans.map((p) => [esc(p._unit), esc(p.name), esc(p.goal || "—"), esc(p.responsiblePerson || "—"), esc(p.startDate || "—"), esc(p.endDate || "—")])) : empty)}
-    </div>
-  </div></div>`;
-}
 /* ---- البيانات الأساسية ---- */
 function basicSectionHtml(d, unit) {
   const periodType = d.periodType || "";
@@ -1902,7 +1530,7 @@ function basicSectionHtml(d, unit) {
   }
 
   return `
-    ${fieldWrap("الجهة الرئيسة", true, sel(null, null, "mainEntity", d.mainEntity !== undefined ? d.mainEntity : MAIN_ENTITY_OPTIONS[0], MAIN_ENTITY_OPTIONS, "اختاري الجهة الرئيسة"))}
+    ${fieldWrap("الجهة الرئيسية", true, inp(null, null, "mainEntity", d.mainEntity !== undefined ? d.mainEntity : "إدارة التعليم النسائي", "اسم الجهة الرئيسية"))}
     ${fieldWrap("الجهة التي ترفع التقرير", expandableSelectHtml("reportingEntityType", d.reportingEntityType || "", REPORTING_TYPES_BASE, d.customReportingTypes || [], "اختاري (اختياري)"))}
     ${fieldWrap("اسم الجهة (القسم أو المركز)", expandableSelectHtml("entityName", d.entityName || "", departmentOptions, [], departmentOptions.length ? "اختاري من إدارة الأقسام والوحدات" : "لا توجد أقسام مضافة بعد", "إضافة قسم أو مركز جديد"))}
     ${showOfficeName ? fieldWrap("اسم المكتب", expandableSelectHtml("officeName", d.officeName || "", OFFICE_NAMES_BASE, d.customOfficeNames || [], "اختاري اسم المكتب") +
@@ -2270,6 +1898,71 @@ function initiativesSectionHtml(d) {
   return `${pillBtn("إضافة مبادرة", { variant: "ghost", icon: iconPlus(15, ROSE), action: "add-item", data: { arr: "initiatives" } })}<div style="margin:14px 0;">${rows}</div>${notesFieldHtml(d)}`;
 }
 
+/* ---- الأثر وقصص النجاح ---- */
+function impactSectionHtml(d) {
+  const items = d.impactStories || [];
+  const rows = items.map((item, i) => `
+    <div class="repeat-item">
+      <div class="repeat-item-head"><span class="repeat-item-title">قصة الأثر ${i + 1}</span>${removeBtn("impactStories", item.id)}</div>
+      ${fieldWrap("نوع الأثر", true, sel("impactStories", item.id, "impactType", item.impactType, IMPACT_TYPES, "اختاري نوع الأثر"))}
+      <div class="subhead">بناء قصة الأثر</div>
+      ${fieldWrap("عنوان مختصر", true, inp("impactStories", item.id, "title", item.title, "عنوان قصة الأثر"))}
+      ${fieldWrap("وصف الوضع قبل التدخل", txt("impactStories", item.id, "beforeSituation", item.beforeSituation))}
+      ${fieldWrap("التدخل أو البرنامج المنفذ", txt("impactStories", item.id, "intervention", item.intervention))}
+      ${fieldWrap("التغير الذي حدث", txt("impactStories", item.id, "change", item.change))}
+      ${fieldWrap("الدليل على التغير", txt("impactStories", item.id, "evidence", item.evidence))}
+      ${fieldWrap("عدد المستفيدات", inp("impactStories", item.id, "beneficiariesCount", item.beneficiariesCount, "0", "number"))}
+      ${fieldWrap("مدة ظهور الأثر", inp("impactStories", item.id, "impactDuration", item.impactDuration, "مثال: شهرين"))}
+      ${fieldWrap("هل الأثر مستمر؟", radio("impactStories", item.id, "ongoing", item.ongoing, YES_NO_OPTIONS))}
+      ${fieldWrap("شهادة مستفيدة إن وجدت", txt("impactStories", item.id, "testimonial", item.testimonial, "اقتباس أو شهادة من مستفيدة"))}
+      ${fieldWrap("رابط الشاهد", inp("impactStories", item.id, "evidenceLink", item.evidenceLink, "https://..."))}
+      ${fieldWrap("هل يسمح بعرض القصة في التقرير العام؟", radio("impactStories", item.id, "publicConsent", item.publicConsent, YES_NO_OPTIONS))}
+    </div>`).join("");
+  return `${pillBtn("إضافة قصة أثر", { variant: "ghost", icon: iconPlus(15, ROSE), action: "add-item", data: { arr: "impactStories" } })}<div style="margin:14px 0;">${rows}</div>${notesFieldHtml(d)}`;
+}
+
+/* ---- التوصيات ---- */
+function recommendationsSectionHtml(d) {
+  const items = d.recommendations || [];
+  const rows = items.map((item, i) => `
+    <div class="repeat-item">
+      <div class="repeat-item-head"><span class="repeat-item-title">التوصية ${i + 1}</span>${removeBtn("recommendations", item.id)}</div>
+      ${fieldWrap("مصدر التوصية", true, sel("recommendations", item.id, "source", item.source, RECOMMENDATION_SOURCES, "اختاري مصدر التوصية"))}
+      ${fieldWrap("مستوى التوصية", true, sel("recommendations", item.id, "level", item.level, RECOMMENDATION_LEVELS, "اختاري مستوى التوصية"))}
+      <div class="subhead">بيانات التوصية</div>
+      ${fieldWrap("نص التوصية", true, txt("recommendations", item.id, "text", item.text, "نص التوصية بوضوح"))}
+      ${fieldWrap("الدليل الذي بنيت عليه", txt("recommendations", item.id, "evidenceBasis", item.evidenceBasis))}
+      ${fieldWrap("النتيجة المتوقعة", txt("recommendations", item.id, "expectedResult", item.expectedResult))}
+      ${fieldWrap("الأولوية", radio("recommendations", item.id, "priority", item.priority, RECOMMENDATION_PRIORITIES))}
+      ${fieldWrap("الجهة المسؤولة", inp("recommendations", item.id, "responsibleParty", item.responsibleParty, "الجهة المسؤولة عن التنفيذ"))}
+      ${fieldWrap("الجهات المساندة", inp("recommendations", item.id, "supportingParties", item.supportingParties, "الجهات المساندة، إن وجدت"))}
+      ${fieldWrap("المدة المقترحة", inp("recommendations", item.id, "proposedDuration", item.proposedDuration, "مثال: شهر واحد"))}
+      ${fieldWrap("التكلفة المتوقعة", inp("recommendations", item.id, "expectedCost", item.expectedCost, "مثال: 2000 ريال أو بدون تكلفة"))}
+      ${fieldWrap("مؤشر تحقق التوصية", inp("recommendations", item.id, "indicator", item.indicator, "كيف ستعرفين أن التوصية تحققت؟"))}
+    </div>`).join("");
+  return `${pillBtn("إضافة توصية", { variant: "ghost", icon: iconPlus(15, ROSE), action: "add-item", data: { arr: "recommendations" } })}<div style="margin:14px 0;">${rows}</div>${notesFieldHtml(d)}`;
+}
+
+/* ---- خطة الفترة القادمة ---- */
+function nextplanSectionHtml(d) {
+  const items = d.mainTasks || [];
+  const MIN = 3, MAX = 5;
+  const rows = items.map((item, i) => `
+    <div class="repeat-item">
+      <div class="repeat-item-head"><span class="repeat-item-title">العمل الرئيسي ${i + 1}</span>${removeBtn("mainTasks", item.id)}</div>
+      ${fieldWrap("اسم العمل الرئيسي", true, inp("mainTasks", item.id, "name", item.name, "اسم العمل المخطط له في الفترة القادمة"))}
+      ${fieldWrap("الهدف منه", txt("mainTasks", item.id, "goal", item.goal))}
+      ${fieldWrap("المسؤولة عنه", inp("mainTasks", item.id, "responsiblePerson", item.responsiblePerson, "اسم المسؤولة"))}
+      ${fieldWrap("الموعد المتوقع", inp("mainTasks", item.id, "expectedDate", item.expectedDate, "", "date"))}
+    </div>`).join("");
+  return `
+    <div class="hint" style="background:${GRAY_BG};border-radius:10px;padding:9px 12px;margin-bottom:14px;">تضيف الوحدة من ${MIN} إلى ${MAX} أعمال رئيسة فقط لخطة الفترة القادمة.</div>
+    ${pillBtn(items.length >= MAX ? `بلغتِ الحد الأقصى (${MAX} أعمال)` : "إضافة عمل رئيسي", { variant: "ghost", icon: iconPlus(15, ROSE), action: "add-item", data: { arr: "mainTasks" }, disabled: items.length >= MAX })}
+    <div style="margin:14px 0;">${rows}</div>
+    ${items.length > 0 && items.length < MIN ? `<div class="hint bad">أضيفي ${MIN - items.length} عمل/أعمال إضافية على الأقل لاستيفاء الحد الأدنى (${MIN}).</div>` : ""}
+    ${notesFieldHtml(d)}`;
+}
+
 /* =============================== Empty-item factories ========================= */
 const EMPTY_ITEM_FACTORY = {
   programs: () => ({ id: uid("prog"), workType: "", name: "", goal: "", targetGroup: "", targetCount: "", actualBeneficiaries: "", startDate: "", endDate: "", location: "", deliveryMode: "", executingEntity: "", participatingEntities: "", responsiblePerson: "", executionStatus: "", completionPercent: "", attendeesCount: "", attendanceRate: "", continuationRate: "", approvedCost: "", actualCost: "", highlightResult: "" }),
@@ -2281,10 +1974,9 @@ const EMPTY_ITEM_FACTORY = {
   strengths: () => ({ id: uid("str"), name: "", area: "", description: "", evidence: "", impact: "", continuity: "", maintainHow: "", transferable: "" }),
   indicators: () => ({ id: uid("kpi"), name: "", actual: "", deviationReason: "", causeType: "", correctiveAction: "", responsiblePerson: "", closureDate: "", requiredSupport: "" }),
   goals: () => ({ id: uid("goal"), strategicGoal: "", operationalGoals: [] }),
-  impacts: () => ({ id: uid("imp"), impactType: "", title: "", before: "", intervention: "", change: "", evidence: "", beneficiaries: "", duration: "", continuing: "", testimonial: "", evidenceLink: "", allowPublic: "" }),
-  recommendations: () => ({ id: uid("rec"), source: "", level: "", text: "", basedOn: "", expectedResult: "", priority: "", responsibleEntity: "", supportingEntities: "", proposedDuration: "", expectedCost: "", successIndicator: "" }),
-  nextPlanItems: () => ({ id: uid("plan"), name: "", goal: "", targetGroup: "", responsiblePerson: "", startDate: "", endDate: "", expectedOutput: "" }),
-  evidenceItems: () => ({ id: uid("evd"), fileType: "", name: "", relatedSection: "", link: "", description: "", confidentiality: "" }),
+  impactStories: () => ({ id: uid("imp2"), impactType: "", title: "", beforeSituation: "", intervention: "", change: "", evidence: "", beneficiariesCount: "", impactDuration: "", ongoing: "", testimonial: "", evidenceLink: "", publicConsent: "" }),
+  recommendations: () => ({ id: uid("rec"), source: "", level: "", text: "", evidenceBasis: "", expectedResult: "", priority: "", responsibleParty: "", supportingParties: "", proposedDuration: "", expectedCost: "", indicator: "" }),
+  mainTasks: () => ({ id: uid("task"), name: "", goal: "", responsiblePerson: "", expectedDate: "" }),
 };
 
 // Maps a field (scoped by its repeatable array, or "top" for top-level fields)
@@ -2299,7 +1991,6 @@ const CUSTOM_OPTION_FIELD_MAP = {
   "challenges|area": "customChallengeAreas",
   "comparisons|changeReason": "customChangeReasons",
   "goals|evidenceType": "customEvidenceTypes",
-  "recommendations|source": "customRecommendationSources",
 };
 
 /* =============================== Full report + preview (read view) ============ */
@@ -2326,12 +2017,12 @@ function emptyHint(label) { return `<div class="hint">${esc(label)}</div>`; }
 
 function sectionReportHtml(section, saved, report) {
   const d = (saved && saved.data) || {};
-  const meta = statusMeta(sectionStatus(report, section.id));
+  const meta = statusMeta(saved ? saved.status : "not_started");
   const head = `<div class="doc-section-title">${esc(section.label)} ${badgeHtml(meta.label, meta.color, meta.bg)}</div>`;
   let body = "";
 
   if (section.id === "basic") {
-    body = kvBlock([kv("الجهة الرئيسة", d.mainEntity), kv("الجهة التي ترفع التقرير", d.reportingEntityType), kv("اسم الجهة", d.entityName), kv("اسم المكتب", d.officeName),
+    body = kvBlock([kv("الجهة الرئيسية", d.mainEntity), kv("الجهة التي ترفع التقرير", d.reportingEntityType), kv("اسم الجهة", d.entityName), kv("اسم المكتب", d.officeName),
       kv("الفترة", d.periodType), kv("من", d.startDate), kv("إلى", d.endDate), kv("العام الهجري", d.hijriYear), kv("الشهر", d.month), kv("الفصل", d.term)]) +
       kvBlock([kv("معدّة التقرير", d.preparerName), kv("المسمى الوظيفي", d.preparerTitle), kv("الرئيسة المباشرة", d.managerName)]);
 
@@ -2418,37 +2109,23 @@ function sectionReportHtml(section, saved, report) {
     ])) : emptyHint("لا توجد مبادرات مُدخلة.");
 
   } else if (section.id === "impact") {
-    const rows = d.impacts || [];
-    body = rows.length ? reportTable(["العنوان", "نوع الأثر", "عدد المستفيدات", "مدة ظهور الأثر", "مستمر؟", "العرض في التقرير العام"], rows.map((r) => [
-      esc(r.title || "—"), esc(r.impactType || "—"), esc(r.beneficiaries || "—"), esc(r.duration || "—"), esc(r.continuing || "—"), esc(r.allowPublic || "—"),
+    const rows = d.impactStories || [];
+    body = rows.length ? reportTable(["العنوان", "نوع الأثر", "عدد المستفيدات", "مستمر؟"], rows.map((it) => [
+      esc(it.title || "—"), esc(it.impactType || "—"), esc(it.beneficiariesCount || "—"), esc(it.ongoing || "—"),
     ])) : emptyHint("لا توجد قصص أثر مُدخلة.");
-    body += rows.map((r) => textBlock(`قبل التدخل — ${r.title || ""}`, r.before) + textBlock("التغير الذي حدث", r.change) + textBlock("الدليل على التغير", r.evidence)).join("");
 
   } else if (section.id === "recommendations") {
     const rows = d.recommendations || [];
-    body = rows.length ? reportTable(["التوصية", "المصدر", "المستوى", "الأولوية", "الجهة المسؤولة", "المدة المقترحة"], rows.map((r) => {
-      const pm = improvementPriorityMeta(r.priority);
-      return [esc(r.text || "—"), esc(r.source || "—"), esc(r.level || "—"), r.priority ? badgeHtml(r.priority, pm.color, pm.bg) : "—", esc(r.responsibleEntity || "—"), esc(r.proposedDuration || "—")];
+    body = rows.length ? reportTable(["نص التوصية", "المصدر", "المستوى", "الأولوية", "الجهة المسؤولة"], rows.map((it) => {
+      const pm = improvementPriorityMeta(it.priority);
+      return [esc(it.text || "—"), esc(it.source || "—"), esc(it.level || "—"), it.priority ? badgeHtml(it.priority, pm.color, pm.bg) : "—", esc(it.responsibleParty || "—")];
     })) : emptyHint("لا توجد توصيات مُدخلة.");
 
   } else if (section.id === "nextplan") {
-    const rows = d.nextPlanItems || [];
-    body = rows.length ? reportTable(["العمل الرئيس", "الهدف", "الفئة المستهدفة", "المسؤولة", "البداية", "النهاية"], rows.map((r) => [
-      esc(r.name || "—"), esc(r.goal || "—"), esc(r.targetGroup || "—"), esc(r.responsiblePerson || "—"), esc(r.startDate || "—"), esc(r.endDate || "—"),
-    ])) : emptyHint("لم تُدخل خطة للفترة القادمة بعد.");
-
-  } else if (section.id === "evidence") {
-    const rows = d.evidenceItems || [];
-    body = rows.length ? reportTable(["اسم الشاهد", "النوع", "القسم المرتبط", "درجة السرية", "الرابط"], rows.map((r) => [
-      esc(r.name || "—"), esc(r.fileType || "—"), esc(r.relatedSection || "—"), esc(r.confidentiality || "—"), linkHtml(r.link),
-    ])) : emptyHint("لا توجد شواهد مُدخلة.");
-
-  } else if (section.id === "review") {
-    const chk = d.checklist || {};
-    const done = REVIEW_CHECKLIST.filter((_, i) => chk[i]).length;
-    body = `<div class="hint" style="margin-bottom:8px;">حالة التقرير: <b>${esc(reportStatusMeta(report.status).label)}</b> — قائمة التحقق: <b>${done} من ${REVIEW_CHECKLIST.length}</b></div>` +
-      kvBlock([kv("قرار المديرة", d.decision), kv("المراجِعة", d.reviewerName), kv("التاريخ", d.reviewDate)]) +
-      textBlock("ملاحظات المديرة", d.reviewNotes);
+    const rows = d.mainTasks || [];
+    body = rows.length ? reportTable(["العمل الرئيسي", "الهدف", "المسؤولة", "الموعد المتوقع"], rows.map((it) => [
+      esc(it.name || "—"), esc(it.goal || "—"), esc(it.responsiblePerson || "—"), esc(it.expectedDate || "—"),
+    ])) : emptyHint("لم تُضف أعمال رئيسة بعد.");
 
   } else {
     body = textBlock("المحتوى", d.content) || emptyHint("لم يُدخل محتوى بعد.");
@@ -2667,7 +2344,7 @@ function attachClickListener() {
 
     switch (action) {
       /* ---------- navigation & shell ---------- */
-      case "nav-to": S.view = ds.view; if (ds.view !== "unit-report") S.activeSectionId = null; if (isMobileViewport()) S.mobileSidebarOpen = false; if (ds.view === "users-manage") { loadUsers(); break; } render(); break;
+      case "nav-to": S.view = ds.view; if (ds.view !== "unit-report") S.activeSectionId = null; if (isMobileViewport()) S.mobileSidebarOpen = false; render(); break;
       case "nav-back-admin": S.view = "admin-reports"; render(); break;
       case "nav-back-from-report": S.view = "unit-reports"; S.activeSectionId = null; render(); break;
       case "nav-to-unit-report": S.view = "unit-report"; render(); break;
@@ -2707,20 +2384,15 @@ function attachClickListener() {
         render();
         break;
       }
-      case "submit-report-for-review": case "mark-report-completed": case "return-report-for-edit": {
+      case "submit-report-for-review": {
         const entry = getCurrentReportEntry();
-        if (!entry) break;
-        if (action === "submit-report-for-review" && !S.isAdmin) {
-          const rv = S.activeSectionId === "review" ? S.sectionDraft : (entry.sections && entry.sections.review && entry.sections.review.data);
-          if (!REVIEW_CHECKLIST.every((_, i) => rv && rv.checklist && rv.checklist[i])) {
-            S.sectionSaveError = "أكملي قائمة التحقق (" + REVIEW_CHECKLIST.length + " بنود) في هذا القسم قبل إرسال التقرير للمراجعة";
-            render(); break;
-          }
-        }
-        // احفظي القسم المفتوح أولًا (الطابور يضمن الترتيب)
-        if (S.activeSectionId) trySaveSectionWithStatus(S.sectionCompleted ? "completed" : "draft");
-        const next = action === "submit-report-for-review" ? "under_review" : action === "mark-report-completed" ? "completed" : "draft";
-        setReportStatus(S.currentUnitId, getCurrentReportEntry(), next);
+        if (entry) saveReportEntry(S.currentUnitId, { ...entry, status: "under_review", updatedAt: Date.now() });
+        render();
+        break;
+      }
+      case "mark-report-completed": {
+        const entry = getCurrentReportEntry();
+        if (entry) saveReportEntry(S.currentUnitId, { ...entry, status: "completed", updatedAt: Date.now() });
         render();
         break;
       }
@@ -2812,6 +2484,24 @@ function attachClickListener() {
         S.ui.confirmDeleteIndicatorId = null; render();
         break;
       }
+      case "load-sample-data": {
+        const merged = [...S.indicatorDefinitions];
+        SAMPLE_INDICATOR_DEFINITIONS.forEach((def) => { if (!merged.some((d) => d.name === def.name)) merged.push({ id: `ind-sample-${def.name}`, ...def }); });
+        S.indicatorDefinitions = merged; dataStore.saveIndicatorDefinitions(merged);
+        const targetUnit = S.units.find((u) => u.id === "seed-1") || S.units[0];
+        if (targetUnit) {
+          const list = ensureUnitReportsLoaded(targetUnit.id);
+          const existing = list.length ? list[list.length - 1] : createNewReportEntry(targetUnit.id);
+          const updated = { ...existing, sections: { ...existing.sections, kpi: { status: "draft", data: { indicators: buildSampleKPIRows(), notes: existing.sections?.kpi?.data?.notes || "" }, updatedAt: Date.now() } },
+            indicatorHistory: { ...existing.indicatorHistory, ...buildSampleIndicatorHistory() } };
+          saveReportEntry(targetUnit.id, updated);
+        }
+        S.ui.sampleStatus = "تم تحميل البيانات التجريبية ✓";
+        render();
+        setTimeout(() => { S.ui.sampleStatus = ""; if (S.view === "indicators-manage") render(); }, 2500);
+        break;
+      }
+
       /* ---------- goals management (strategic/operational share the same actions via prefix) ---------- */
       case "add-strategic-goal": case "add-operational-goal": {
         const kind = action === "add-strategic-goal" ? "strategic" : "operational";
@@ -2861,46 +2551,6 @@ function handleDynamicGoalAction(action, ds) {
 function handleReportEditorAction(action, ds) {
   switch (action) {
     case "toggle-login-pw": S.ui.loginShowPw = !S.ui.loginShowPw; render(); return true;
-    case "refresh-data":
-      sync.flash("جارِ التحديث…");
-      refreshData().then((ok) => sync.flash(ok ? "تم تحديث البيانات ✓" : "توجد تعديلات قيد الحفظ — انتظري لحظات")).catch((e) => sync.flash("⚠ " + e.message, true));
-      return true;
-    case "set-final-scope": S.ui.finalScope = ds.scope; render(); return true;
-    case "toggle-check": {
-      const c = S.sectionDraft.checklist || (S.sectionDraft.checklist = {});
-      c[ds.idx] = !c[ds.idx];
-      render(); return true;
-    }
-    case "add-plan-item": {
-      const list = getItemList("nextPlanItems");
-      if (list.length < NEXT_PLAN_MAX) list.push(EMPTY_ITEM_FACTORY.nextPlanItems());
-      render(); return true;
-    }
-    case "add-user": {
-      const g = (id) => (document.getElementById(id) || {}).value || "";
-      const payload = { username: g("new-user-username").trim(), password: g("new-user-password"), name: g("new-user-name").trim(), role: g("new-user-role") || "user", unitId: g("new-user-unit") };
-      if (!payload.username || !payload.password) { S.ui.usersError = "أدخلي اسم المستخدم وكلمة السر"; render(); return true; }
-      api.call("saveUser", payload).then(() => loadUsers()).catch((e) => { S.ui.usersError = e.message; render(); });
-      return true;
-    }
-    case "user-set-password": {
-      const u = (S.users || []).find((x) => x.username === ds.username);
-      const pw = u ? prompt("أدخلي كلمة السر الجديدة للحساب: " + u.username) : null;
-      if (!pw) return true;
-      api.call("saveUser", { ...u, password: pw }).then(() => sync.flash("تم تغيير كلمة السر ✓")).catch((e) => { S.ui.usersError = e.message; render(); });
-      return true;
-    }
-    case "toggle-user": {
-      const u = (S.users || []).find((x) => x.username === ds.username);
-      if (!u) return true;
-      api.call("saveUser", { ...u, active: !u.active }).then(() => loadUsers()).catch((e) => { S.ui.usersError = e.message; render(); });
-      return true;
-    }
-    case "delete-user": {
-      if (!confirm("حذف الحساب \"" + ds.username + "\" نهائيًا؟")) return true;
-      api.call("deleteUser", { username: ds.username }).then(() => loadUsers()).catch((e) => { S.ui.usersError = e.message; render(); });
-      return true;
-    }
 
     case "toggle-phase": S.openPhaseId = S.openPhaseId === ds.phase ? null : ds.phase; render(); return true;
     case "toggle-phase-collapse": S.phaseCollapsed = !S.phaseCollapsed; render(); return true;
@@ -2925,16 +2575,9 @@ function handleReportEditorAction(action, ds) {
     }
     case "section-save-draft": {
       if (trySaveSectionWithStatus(S.sectionCompleted ? "completed" : "draft")) {
-        S.sectionSaveStatus = "جارِ الحفظ…";
+        S.sectionSaveStatus = "تم الحفظ ✓";
         render();
-        Promise.resolve(S._lastSave).then(() => {
-          S.sectionSaveStatus = "تم الحفظ ✓";
-          if (S.activeSectionId) render();
-          setTimeout(() => { S.sectionSaveStatus = ""; if (S.activeSectionId) render(); }, 1500);
-        }).catch((e) => {
-          S.sectionSaveStatus = ""; S.sectionSaveError = "تعذر الحفظ: " + e.message;
-          if (S.activeSectionId) render();
-        });
+        setTimeout(() => { S.sectionSaveStatus = ""; if (S.activeSectionId) render(); }, 1500);
       } else render();
       return true;
     }
@@ -2990,9 +2633,8 @@ function handleReportEditorAction(action, ds) {
       if (!(form.name && form.name.trim() && form.target !== "" && form.target !== undefined)) { render(); return true; }
       const name = form.name.trim();
       if (!S.indicatorDefinitions.some((d) => d.name === name)) {
-        const newDef = { id: uid("ind"), category: "", direction: "", unit: "", ...form, name };
-        S.indicatorDefinitions = [...S.indicatorDefinitions, newDef];
-        dataStore.addIndicatorDefinition(newDef);
+        S.indicatorDefinitions = [...S.indicatorDefinitions, { id: uid("ind"), name, category: "", direction: "", unit: "", ...form }];
+        dataStore.saveIndicatorDefinitions(S.indicatorDefinitions);
       }
       const list = getItemList("indicators");
       const item = findById(list, ds.id);
@@ -3054,15 +2696,6 @@ function trySaveSectionWithStatus(status) {
     const result = validateGoalsData(S.sectionDraft);
     if (!result.valid) { S.sectionSaveError = result.message; return false; }
   }
-  if (S.activeSectionId === "nextplan" && status === "completed") {
-    const n = (S.sectionDraft.nextPlanItems || []).filter((x) => (x.name || "").trim()).length;
-    if (n < NEXT_PLAN_MIN) { S.sectionSaveError = `خطة الفترة القادمة: أضيفي ${NEXT_PLAN_MIN} أعمال رئيسة على الأقل (الحد الأقصى ${NEXT_PLAN_MAX}) قبل تحديد القسم كمكتمل`; return false; }
-  }
-  if (S.activeSectionId === "basic" && S.sectionDraft && S.sectionDraft.mainEntity === undefined) S.sectionDraft.mainEntity = MAIN_ENTITY_OPTIONS[0];
-  if (S.activeSectionId === "review" && S.isAdmin && S.sectionDraft && (S.sectionDraft.decision || S.sectionDraft.reviewNotes) && S.currentUser) {
-    S.sectionDraft.reviewerName = S.currentUser.name;
-    S.sectionDraft.reviewDate = new Date().toISOString().slice(0, 10);
-  }
   S.sectionSaveError = "";
   persistSection(S.activeSectionId, S.sectionDraft, status);
   return true;
@@ -3074,37 +2707,10 @@ function afterRender() {
   if (loginUserEl) loginUserEl.focus();
 }
 
-async function boot() {
+function boot() {
   attachFormListeners();
   attachClickListener();
-  const pill = document.getElementById("sync-pill");
-  if (pill) pill.addEventListener("click", () => { if (sync.paused) sync.retryNow(); });
-
-  // تحديث تلقائي هادئ عند العودة للتبويب (في الصفحات التي لا تحتوي نماذج مفتوحة فقط)
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible" || !S.currentUser) return;
-    if (!["dashboard", "all-reports", "admin-reports", "unit-reports"].includes(S.view)) return;
-    if (Date.now() - (S.lastLoad || 0) < 60000) return;
-    refreshData(true).catch(() => {});
-  });
-
-  const saved = readSession();
-  if (saved && saved.token) {
-    S.session = saved; S.view = "loading"; render();
-    try {
-      const data = await api.call("bootstrap");
-      applyBootstrap(data); S.lastLoad = Date.now();
-      S.session.user = data.user; writeSession(S.session);
-      doLogin(data.user);
-      return;
-    } catch (e) {
-      if (e.code !== "AUTH") S.ui.loginError = e.message;
-      if (e.code !== "NETWORK") clearSession();
-      S.session = null; S.view = "login";
-    }
-  }
   render();
-  loadLoginList();
 }
 
 document.addEventListener("DOMContentLoaded", boot);
