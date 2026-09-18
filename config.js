@@ -1,6 +1,5 @@
 /* إعدادات الاتصال بقاعدة البيانات (Google Sheets عبر Apps Script)
-   رابط Web App المنشور من Google Apps Script */
-
+   الصقي هنا رابط الـ Web app بعد النشر (ينتهي بـ /exec) */
 const CONFIG = {
-  API_URL: "https://script.google.com/macros/s/AKfycbzMf5VNT9wziqY07fQQhuW2Id2PI6xptzXtRAtDJKyQPyjPmAR9HyJKNAMImUC8PTOhXA/exec",
+  API_URL: "https://script.google.com/macros/s/AKfycbxtP1ssSEcrTYcOLaxma0iKFx3YffaDOb5QE7yK9R3z1wZAVbj0DazGOZdu4F3QWZVijA/exec",
 };
