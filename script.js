@@ -155,10 +155,10 @@ const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbyidHe_LLI1pTuJ0
 async function callSheetsApi(action, payload) {
   if (!SHEETS_API_URL) return { ok: false, error: "لم يتم ربط الموقع بجوجل شيت بعد" };
   try {
-    const res = await fetch(SHEETS_API_URL, {
-      method: "POST",
-      body: JSON.stringify({ action, payload: payload || {} }),
-    });
+    // GET بمعامِلات الرابط بدل POST — أكثر توافقًا مع طريقة تعامل بعض
+    // المتصفحات مع تحويلات (redirects) تطبيقات ويب Google Apps Script.
+    const qs = `?action=${encodeURIComponent(action)}&payload=${encodeURIComponent(JSON.stringify(payload || {}))}`;
+    const res = await fetch(SHEETS_API_URL + qs);
     return await res.json();
   } catch (err) {
     return { ok: false, error: "تعذر الاتصال بجوجل شيت. تحققي من الاتصال بالإنترنت." };
