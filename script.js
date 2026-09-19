@@ -1257,26 +1257,27 @@ function unitRowHtml(u) {
 }
 
 /* =============================== Indicators management ======================= */
-function indicatorDefFieldsHtml(prefix, values) {
+function indicatorDefFieldsHtml(stateKey, values) {
   values = values || {};
+  const opt = (list, field) => list.map((o) => `<option value="${esc(o)}" ${o === values[field] ? "selected" : ""}>${esc(o)}</option>`).join("");
   return `
-    ${fieldWrap("اسم المؤشر", true, `<input class="input" id="${prefix}-name" value="${esc(values.name || "")}" placeholder="مثال: نسبة إنجاز الاختبارات" />`)}
-    ${fieldWrap("تصنيف المؤشر", selectHtml(prefix + "-category", values.category || "", INDICATOR_CATEGORIES).replace("<select", `<select id="${prefix}-category"`))}
-    ${fieldWrap("اتجاه المؤشر", selectHtml(prefix + "-direction", values.direction || "", INDICATOR_DIRECTIONS).replace("<select", `<select id="${prefix}-direction"`))}
-    ${fieldWrap("طبيعة المؤشر", radioGroupHtml(prefix + "-nature", values.nature || "", INDICATOR_NATURE))}
-    ${fieldWrap("دورية القياس", selectHtml(prefix + "-frequency", values.frequency || "", MEASUREMENT_FREQUENCIES).replace("<select", `<select id="${prefix}-frequency"`))}
-    ${fieldWrap("وحدة القياس", selectHtml(prefix + "-unit", values.unit || "", MEASUREMENT_UNITS).replace("<select", `<select id="${prefix}-unit"`))}
-    ${fieldWrap("المستهدف", true, `<input class="input" type="number" id="${prefix}-target" value="${esc(values.target ?? "")}" placeholder="0" />`)}
-    ${fieldWrap("مصدر البيانات", `<input class="input" id="${prefix}-dataSource" value="${esc(values.dataSource || "")}" placeholder="مثال: نظام الاختبارات الإلكتروني" />`)}
-    ${fieldWrap("طريقة الحساب", `<textarea class="input" id="${prefix}-calculationMethod" style="min-height:60px">${esc(values.calculationMethod || "")}</textarea>`)}
+    ${fieldWrap("اسم المؤشر", true, `<input class="input" data-newind="${esc(stateKey)}" data-newind-field="name" value="${esc(values.name || "")}" placeholder="مثال: نسبة إنجاز الاختبارات" />`)}
+    ${fieldWrap("تصنيف المؤشر", `<select class="input" data-newind="${esc(stateKey)}" data-newind-field="category"><option value="">اختاري</option>${opt(INDICATOR_CATEGORIES, "category")}</select>`)}
+    ${fieldWrap("اتجاه المؤشر", `<select class="input" data-newind="${esc(stateKey)}" data-newind-field="direction"><option value="">اختاري</option>${opt(INDICATOR_DIRECTIONS, "direction")}</select>`)}
+    ${fieldWrap("طبيعة المؤشر", `<div class="radio-group">${INDICATOR_NATURE.map((o) => `<button type="button" class="radio-pill ${o === values.nature ? "active" : ""}" data-action="set-newind-radio" data-newind="${esc(stateKey)}" data-newind-field="nature" data-value="${esc(o)}">${esc(o)}</button>`).join("")}</div>`)}
+    ${fieldWrap("دورية القياس", `<select class="input" data-newind="${esc(stateKey)}" data-newind-field="frequency"><option value="">اختاري</option>${opt(MEASUREMENT_FREQUENCIES, "frequency")}</select>`)}
+    ${fieldWrap("وحدة القياس", `<select class="input" data-newind="${esc(stateKey)}" data-newind-field="unit"><option value="">اختاري</option>${opt(MEASUREMENT_UNITS, "unit")}</select>`)}
+    ${fieldWrap("المستهدف", true, `<input class="input" type="number" data-newind="${esc(stateKey)}" data-newind-field="target" value="${esc(values.target ?? "")}" placeholder="0" />`)}
+    ${fieldWrap("مصدر البيانات", `<input class="input" data-newind="${esc(stateKey)}" data-newind-field="dataSource" value="${esc(values.dataSource || "")}" placeholder="مثال: نظام الاختبارات الإلكتروني" />`)}
+    ${fieldWrap("طريقة الحساب", `<textarea class="input" data-newind="${esc(stateKey)}" data-newind-field="calculationMethod" style="min-height:60px">${esc(values.calculationMethod || "")}</textarea>`)}
   `;
 }
-function readIndicatorDefForm(prefix) {
-  const val = (id) => (document.getElementById(prefix + "-" + id) || {}).value ?? "";
-  const radioVal = (name) => { const el = document.querySelector(`[data-radio-group="${prefix}-nature"] .active`); return el ? el.dataset.value : ""; };
+function indicatorFormState(stateKey) { return S.ui[`newIndicatorForm_${stateKey}`] || (S.ui[`newIndicatorForm_${stateKey}`] = {}); }
+function readIndicatorDefForm(stateKey) {
+  const form = S.ui[`newIndicatorForm_${stateKey}`] || {};
   return {
-    name: val("name"), category: val("category"), direction: val("direction"), nature: radioVal(),
-    frequency: val("frequency"), unit: val("unit"), target: val("target"), dataSource: val("dataSource"), calculationMethod: val("calculationMethod"),
+    name: form.name || "", category: form.category || "", direction: form.direction || "", nature: form.nature || "",
+    frequency: form.frequency || "", unit: form.unit || "", target: form.target ?? "", dataSource: form.dataSource || "", calculationMethod: form.calculationMethod || "",
   };
 }
 
@@ -1293,7 +1294,7 @@ function renderIndicatorsManage() {
 
     <div class="card" style="margin-bottom:22px;">
       <div style="font-size:12.5px;font-weight:800;color:${ROSE};margin-bottom:12px;">إضافة مؤشر جديد</div>
-      ${indicatorDefFieldsHtml("new-ind", ui.newIndicatorForm || {})}
+      ${indicatorDefFieldsHtml("new-ind", indicatorFormState("new-ind"))}
       ${pillBtn("إضافة مؤشر", { icon: iconPlus(15, "#fff"), action: "add-indicator-def" })}
     </div>
 
@@ -1313,7 +1314,7 @@ function indicatorDefRowHtml(def) {
     </div>`;
   }
   if (editing) {
-    return `<div class="card">${indicatorDefFieldsHtml("edit-ind", def)}
+    return `<div class="card">${indicatorDefFieldsHtml("edit-ind", indicatorFormState("edit-ind"))}
       <div style="display:flex;gap:6px;">${pillBtn("حفظ", { action: "save-indicator-edit", data: { id: def.id } })}${pillBtn("إلغاء", { variant: "ghost", action: "cancel-indicator-edit" })}</div>
     </div>`;
   }
@@ -2678,18 +2679,24 @@ function attachClickListener() {
         if (!form.name.trim()) break;
         S.indicatorDefinitions = [...S.indicatorDefinitions, { id: uid("ind"), ...form, name: form.name.trim() }];
         dataStore.saveIndicatorDefinitions(S.indicatorDefinitions);
-        S.ui.newIndicatorForm = {};
+        S.ui["newIndicatorForm_new-ind"] = {};
         render();
         break;
       }
-      case "start-indicator-edit": S.ui.editingIndicatorId = ds.id; render(); break;
-      case "cancel-indicator-edit": S.ui.editingIndicatorId = null; render(); break;
+      case "start-indicator-edit": {
+        S.ui.editingIndicatorId = ds.id;
+        const def = S.indicatorDefinitions.find((d) => d.id === ds.id);
+        S.ui["newIndicatorForm_edit-ind"] = def ? { ...def } : {};
+        render();
+        break;
+      }
+      case "cancel-indicator-edit": S.ui.editingIndicatorId = null; S.ui["newIndicatorForm_edit-ind"] = {}; render(); break;
       case "save-indicator-edit": {
         const form = readIndicatorDefForm("edit-ind");
         if (!form.name.trim()) break;
         S.indicatorDefinitions = S.indicatorDefinitions.map((d) => d.id === ds.id ? { ...d, ...form, name: form.name.trim() } : d);
         dataStore.saveIndicatorDefinitions(S.indicatorDefinitions);
-        S.ui.editingIndicatorId = null; render();
+        S.ui.editingIndicatorId = null; S.ui["newIndicatorForm_edit-ind"] = {}; render();
         break;
       }
       case "confirm-delete-indicator": S.ui.confirmDeleteIndicatorId = ds.id; render(); break;
