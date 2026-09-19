@@ -150,7 +150,7 @@ const RECOMMENDATION_PRIORITIES = ["عاجلة", "عالية", "متوسطة", "
    the app works exactly as before — pure localStorage + the demo accounts
    below. Once you paste a URL here, login and unit/department management
    switch to reading and writing your Google Sheet instead. */
-const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycby3kfKOKsABvzfxtexnz4JdWfWZD6TpevZkH2DMqlsDaaiHNQJyDq7dh8YGCC5ttKBY/exec";
+const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbwKf9MuuHoAKSwbWKJ4fyLERi1OCHh61V5KGPkCQRkk5pYdm289dOHJ0c2_mGi_bHeB/exec";
 
 async function callSheetsApi(action, payload) {
   if (!SHEETS_API_URL) return { ok: false, error: "لم يتم ربط الموقع بجوجل شيت بعد" };
