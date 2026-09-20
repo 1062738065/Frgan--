@@ -240,7 +240,12 @@ const dataStore = {
   getDepartments() { const v = lsGet(DEPARTMENTS_KEY); if (v) return JSON.parse(v); const seed = seedDepartments(); lsSet(DEPARTMENTS_KEY, JSON.stringify(seed)); return seed; },
   saveDepartments(d) {
     lsSet(DEPARTMENTS_KEY, JSON.stringify(d));
-    if (sheetsConfigured()) callSheetsApi("saveDepartments", { departments: d }).catch(() => {});
+    if (sheetsConfigured()) {
+      // نرسل حقل "اعتماد أبرز النتائج" كنص JSON (curationJson) بدل كائن متداخل،
+      // لأن جوجل شيت يخزن كل عمود كنص عادي فقط.
+      const forSheet = d.map((dept) => ({ ...dept, curationJson: JSON.stringify(dept.curation || { approvedKeys: [] }) }));
+      callSheetsApi("saveDepartments", { departments: forSheet }).catch(() => {});
+    }
   },
   getUnits() { const v = lsGet(UNITS_KEY); if (v) return JSON.parse(v); const seed = seedUnits(); lsSet(UNITS_KEY, JSON.stringify(seed)); return seed; },
   saveUnits(u) {
@@ -698,7 +703,11 @@ async function refreshUnitsAndDepartmentsFromSheet() {
     dataStore.cacheUnitsLocally(S.units);
   }
   if (deptRes.ok && Array.isArray(deptRes.data)) {
-    S.departments = deptRes.data;
+    S.departments = deptRes.data.map((dept) => {
+      let curation = { approvedKeys: [] };
+      try { curation = JSON.parse(dept.curationJson || '{"approvedKeys":[]}'); } catch (e) { /* تجاهل */ }
+      return { ...dept, curation };
+    });
     dataStore.cacheDepartmentsLocally(S.departments);
   }
 }
@@ -1076,7 +1085,64 @@ function renderDepartmentOverview() {
       right: pillBtn("خروج", { variant: "danger", icon: iconLogout(15, DANGER), action: "logout" }) })}
     ${units.length === 0 ? `<div class="card" style="text-align:center;color:${SUBTLE};padding:36px;">لا توجد وحدات نشطة تابعة لهذا القسم بعد.</div>` :
       `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;">${units.map((u) => unitCardHtml(u, null, latestReportForUnit(u.id))).join("")}</div>`}
+    ${deptCurationSectionHtml(dept)}
   </div></div>`;
+}
+
+/* ---- اعتماد القسم لأبرز النتائج: تُستخدم لاحقًا لترتيب أولوية العناصر
+   بالملخص التنفيذي والتقرير الإداري النهائي — تُخزَّن كجزء من بيانات القسم
+   نفسها، بدون أي جدول أو تبويب جديد بقاعدة البيانات. ---- */
+function curationKey(kind, reportId, itemId) { return `${kind}:${reportId}:${itemId}`; }
+function isDeptCurated(dept, key) { return !!(dept.curation && dept.curation.approvedKeys && dept.curation.approvedKeys.includes(key)); }
+function isItemCurated(unit, key) {
+  const dept = S.departments.find((d) => d.id === unit.departmentId);
+  return dept ? isDeptCurated(dept, key) : false;
+}
+function toggleDeptCuration(dept, key) {
+  const current = (dept.curation && dept.curation.approvedKeys) || [];
+  const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
+  S.departments = S.departments.map((d) => d.id === dept.id ? { ...d, curation: { approvedKeys: next } } : d);
+  dataStore.saveDepartments(S.departments);
+}
+function collectDeptCurationCandidates(dept) {
+  const deptUnits = S.units.filter((u) => u.departmentId === dept.id && u.status === "active");
+  const achievements = [], recommendations = [], challenges = [], strengths = [];
+  deptUnits.forEach((u) => {
+    ensureUnitReportsLoaded(u.id).forEach((r) => {
+      (r.sections?.programs?.data?.programs || []).filter((p) => p.highlightResult).forEach((p) => {
+        achievements.push({ key: curationKey("achievement", r.id, p.id), unitName: u.name, text: `${p.name || "عمل"}: ${p.highlightResult}` });
+      });
+      (r.sections?.recommendations?.data?.recommendations || []).forEach((rec) => {
+        recommendations.push({ key: curationKey("recommendation", r.id, rec.id), unitName: u.name, text: rec.text });
+      });
+      (r.sections?.challenges?.data?.challenges || []).forEach((c) => {
+        challenges.push({ key: curationKey("challenge", r.id, c.id), unitName: u.name, text: c.name, severity: c.severity });
+      });
+      (r.sections?.strengths?.data?.strengths || []).forEach((s) => {
+        strengths.push({ key: curationKey("strength", r.id, s.id), unitName: u.name, text: s.name });
+      });
+    });
+  });
+  return { achievements, recommendations, challenges, strengths };
+}
+function deptCurationSectionHtml(dept) {
+  const { achievements, recommendations, challenges, strengths } = collectDeptCurationCandidates(dept);
+  const renderList = (items, emptyMsg) => items.length === 0 ? emptyHint(emptyMsg) : items.map((it) => `
+    <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:8px;background:${isDeptCurated(dept, it.key) ? GREEN_BG : "#fff"};border:1px solid ${isDeptCurated(dept, it.key) ? GREEN : BORDER};margin-bottom:6px;">
+      <button type="button" data-action="toggle-dept-curation" data-key="${esc(it.key)}" style="flex-shrink:0;background:none;border:none;cursor:pointer;padding:2px;">
+        ${isDeptCurated(dept, it.key) ? iconCheckCircle(18, GREEN) : iconCircle(18, SUBTLE)}
+      </button>
+      <div style="flex:1;font-size:12.5px;"><b>${esc(it.unitName)}</b> — ${esc(it.text || "—")}</div>
+    </div>`).join("");
+  return `
+    <div class="card" style="margin-top:18px;">
+      <div class="prs-title" style="font-size:14px;font-weight:800;margin-bottom:6px;">اعتماد أبرز النتائج والتوصيات</div>
+      <div class="hint" style="margin-bottom:12px;">علّمي أهم ما يستحق الوصول للإدارة العليا — العناصر المعتمدة تظهر أولاً بالملخص التنفيذي والتقرير الإداري النهائي.</div>
+      <div class="subhead">أبرز الإنجازات</div>${renderList(achievements, "لا توجد إنجازات بارزة مُدخلة بعد.")}
+      <div class="subhead">نقاط القوة</div>${renderList(strengths, "لا توجد نقاط قوة مُدخلة بعد.")}
+      <div class="subhead">التوصيات</div>${renderList(recommendations, "لا توجد توصيات مُدخلة بعد.")}
+      <div class="subhead">التحديات</div>${renderList(challenges, "لا توجد تحديات مُدخلة بعد.")}
+    </div>`;
 }
 
 /* =============================== Executive (الإدارة العليا) — اطّلاع إشرافي شامل فقط،
@@ -1164,9 +1230,52 @@ function renderExecutiveDashboard() {
   </div></div>`;
 }
 
+/* ---- ميزة كامنة: توليد الملخص التنفيذي بالذكاء الاصطناعي — تعمل فقط بعد
+   إضافة مفتاح Anthropic API بمحرر Apps Script (راجعي الملف المرفق للتفعيل).
+   قبل ذلك، تعرض رسالة توضيحية بدون أي خطأ حقيقي. ---- */
+function aiSummaryCardHtml() {
+  if (S.ui.aiSummaryBusy) {
+    return `<div class="card" style="margin-bottom:16px;text-align:center;color:${SUBTLE};">جارٍ توليد الملخص التنفيذي…</div>`;
+  }
+  if (S.ui.aiSummaryText) {
+    return `<div class="card" style="margin-bottom:16px;background:${GOLD_BG};">
+      <div class="prs-title" style="font-size:14px;font-weight:800;margin-bottom:8px;">✨ الملخص التنفيذي (بالذكاء الاصطناعي)</div>
+      <div style="font-size:13px;line-height:2;white-space:pre-wrap;">${esc(S.ui.aiSummaryText)}</div>
+      ${pillBtn("توليد من جديد", { variant: "ghost", action: "generate-ai-summary" })}
+    </div>`;
+  }
+  return `<div class="card" style="margin-bottom:16px;">
+    ${S.ui.aiSummaryError ? `<div class="hint bad" style="margin-bottom:10px;">${esc(S.ui.aiSummaryError)}</div>` : ""}
+    ${pillBtn("توليد الملخص التنفيذي بالذكاء الاصطناعي ✨", { action: "generate-ai-summary" })}
+  </div>`;
+}
+async function generateAiSummaryAsync() {
+  const flat = collectAllReportsFlat();
+  const data = {
+    totalReports: flat.length,
+    completedReports: flat.filter((x) => x.report.status === "completed").length,
+    achievements: [], challenges: [], recommendations: [],
+  };
+  flat.forEach((x) => {
+    (x.report.sections?.programs?.data?.programs || []).filter((p) => p.highlightResult).forEach((p) => data.achievements.push({ unit: x.unit.name, result: p.highlightResult }));
+    (x.report.sections?.challenges?.data?.challenges || []).forEach((c) => data.challenges.push({ unit: x.unit.name, name: c.name, severity: c.severity }));
+    (x.report.sections?.recommendations?.data?.recommendations || []).forEach((r) => data.recommendations.push({ unit: x.unit.name, text: r.text, priority: r.priority }));
+  });
+  const res = await callSheetsApi("generateExecutiveSummary", { data });
+  S.ui.aiSummaryBusy = false;
+  if (res.ok) { S.ui.aiSummaryText = res.summary; S.ui.aiSummaryError = ""; }
+  else { S.ui.aiSummaryError = res.error || "تعذر توليد الملخص."; }
+  render();
+}
+
 function renderExecutiveSummary() {
   const flat = collectAllReportsFlat();
-  const achievements = flat.map((x) => x.report.sections?.programs?.data?.programs || []).flat().filter((p) => p.highlightResult).slice(0, 6);
+  const sortCurated = (arr) => [...arr].sort((a, b) => (b.curated ? 1 : 0) - (a.curated ? 1 : 0));
+  const achievementsAll = [];
+  flat.forEach((x) => (x.report.sections?.programs?.data?.programs || []).filter((p) => p.highlightResult).forEach((p) => {
+    achievementsAll.push({ name: p.name, highlightResult: p.highlightResult, unitName: x.unit.name, curated: isItemCurated(x.unit, curationKey("achievement", x.report.id, p.id)) });
+  }));
+  const achievements = sortCurated(achievementsAll).slice(0, 6);
   const positiveResults = flat.filter((x) => x.report.sections?.analysis?.data?.positiveResult).slice(0, 6);
   const allIndicators = [];
   flat.forEach((x) => (x.report.sections?.kpi?.data?.indicators || []).filter((r) => r.name).forEach((row) => allIndicators.push({ ...row, unitName: x.unit.name })));
@@ -1180,10 +1289,12 @@ function renderExecutiveSummary() {
   flat.forEach((x) => (x.report.sections?.goals?.data?.goals || []).forEach((g) => (g.operationalGoals || []).forEach((og) => allGoals.push(og))));
   const goalLevelCounts = {};
   allGoals.forEach((g) => { if (g.level) goalLevelCounts[g.level] = (goalLevelCounts[g.level] || 0) + 1; });
-  const allChallenges = [];
-  flat.forEach((x) => (x.report.sections?.challenges?.data?.challenges || []).forEach((c) => allChallenges.push({ ...c, unitName: x.unit.name })));
-  const allRecommendations = [];
-  flat.forEach((x) => (x.report.sections?.recommendations?.data?.recommendations || []).forEach((r) => allRecommendations.push({ ...r, unitName: x.unit.name })));
+  const allChallengesAll = [];
+  flat.forEach((x) => (x.report.sections?.challenges?.data?.challenges || []).forEach((c) => allChallengesAll.push({ ...c, unitName: x.unit.name, curated: isItemCurated(x.unit, curationKey("challenge", x.report.id, c.id)) })));
+  const allChallenges = sortCurated(allChallengesAll);
+  const allRecommendationsAll = [];
+  flat.forEach((x) => (x.report.sections?.recommendations?.data?.recommendations || []).forEach((r) => allRecommendationsAll.push({ ...r, unitName: x.unit.name, curated: isItemCurated(x.unit, curationKey("recommendation", x.report.id, r.id)) })));
+  const allRecommendations = sortCurated(allRecommendationsAll);
   const notesSummaries = flat.filter((x) => x.report.sections?.analysis?.data?.summary).map((x) => ({ unitName: x.unit.name, summary: x.report.sections.analysis.data.summary }));
 
   const dates = flat.map((x) => x.report.sections?.basic?.data).filter(Boolean);
@@ -1204,10 +1315,12 @@ function renderExecutiveSummary() {
     ${topBarHtml({ title: "الملخص التنفيذي", subtitle: `الفترة: ${periodRange}`,
       right: pillBtn("خروج", { variant: "danger", icon: iconLogout(15, DANGER), action: "logout" }) })}
 
+    ${aiSummaryCardHtml()}
+
     <div class="card" style="margin-bottom:16px;">
       <div class="prs-title" style="font-size:14px;font-weight:800;margin-bottom:10px;">أهم النتائج والإنجازات</div>
       ${achievements.length === 0 ? emptyHint("لا توجد نتائج بارزة مُدخلة بعد.") :
-        achievements.map((p) => `<div class="hint good" style="margin-bottom:6px;">${iconCheckCircle(13, GREEN)} ${esc(p.name || "عمل")}: ${esc(p.highlightResult)}</div>`).join("")}
+        achievements.map((p) => `<div class="hint good" style="margin-bottom:6px;">${iconCheckCircle(13, GREEN)} ${esc(p.name || "عمل")}: ${esc(p.highlightResult)} ${p.curated ? `<span style="color:${GOLD};">⭐ معتمد من القسم</span>` : ""}</div>`).join("")}
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:16px;">
@@ -1225,13 +1338,13 @@ function renderExecutiveSummary() {
     <div class="card" style="margin-bottom:16px;">
       <div class="prs-title" style="font-size:14px;font-weight:800;margin-bottom:10px;">أبرز التحديات</div>
       ${allChallenges.length === 0 ? emptyHint("لا توجد تحديات مُدخلة بعد.") :
-        reportTable(["اسم الصعوبة", "الوحدة", "المستوى"], allChallenges.slice(0, 8).map((c) => { const sm = challengeSeverityMeta(c.severity); return [esc(c.name || "—"), esc(c.unitName), c.severity ? badgeHtml(c.severity, sm.color, sm.bg) : "—"]; }))}
+        reportTable(["اسم الصعوبة", "الوحدة", "المستوى", ""], allChallenges.slice(0, 8).map((c) => { const sm = challengeSeverityMeta(c.severity); return [esc(c.name || "—"), esc(c.unitName), c.severity ? badgeHtml(c.severity, sm.color, sm.bg) : "—", c.curated ? `<span style="color:${GOLD};">⭐</span>` : ""]; }))}
     </div>
 
     <div class="card" style="margin-bottom:16px;">
       <div class="prs-title" style="font-size:14px;font-weight:800;margin-bottom:10px;">التوصيات</div>
       ${allRecommendations.length === 0 ? emptyHint("لا توجد توصيات مُدخلة بعد.") :
-        reportTable(["نص التوصية", "الوحدة", "الأولوية"], allRecommendations.slice(0, 8).map((r) => { const pm = improvementPriorityMeta(r.priority); return [esc(r.text || "—"), esc(r.unitName), r.priority ? badgeHtml(r.priority, pm.color, pm.bg) : "—"]; }))}
+        reportTable(["نص التوصية", "الوحدة", "الأولوية", ""], allRecommendations.slice(0, 8).map((r) => { const pm = improvementPriorityMeta(r.priority); return [esc(r.text || "—"), esc(r.unitName), r.priority ? badgeHtml(r.priority, pm.color, pm.bg) : "—", r.curated ? `<span style="color:${GOLD};">⭐</span>` : ""]; }))}
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -1268,21 +1381,48 @@ function renderExecutiveFinalReport() {
   const completionPct = total ? Math.round((completed / total) * 100) : 0;
   const activeDepartments = S.departments.filter((d) => d.status === "active");
   const activeUnits = S.units.filter((u) => u.status === "active");
+  const sortCurated = (arr) => [...arr].sort((a, b) => (b.curated ? 1 : 0) - (a.curated ? 1 : 0));
+  const starTd = (curated) => curated ? `<span style="color:${GOLD};">⭐</span>` : "";
 
   const dates = flat.map((x) => x.report.sections?.basic?.data).filter(Boolean);
   const startDates = dates.map((d) => d.startDate).filter(Boolean).sort();
   const endDates = dates.map((d) => d.endDate).filter(Boolean).sort();
 
-  const allGoals = [];
-  flat.forEach((x) => (x.report.sections?.goals?.data?.goals || []).forEach((g) => (g.operationalGoals || []).forEach((og) => allGoals.push({ ...og, unitName: x.unit.name, strategicGoal: g.strategicGoal }))));
   const allIndicators = [];
   flat.forEach((x) => (x.report.sections?.kpi?.data?.indicators || []).filter((r) => r.name).forEach((row) => allIndicators.push({ ...row, unitName: x.unit.name })));
-  const allChallenges = [];
-  flat.forEach((x) => (x.report.sections?.challenges?.data?.challenges || []).forEach((c) => allChallenges.push({ ...c, unitName: x.unit.name })));
-  const allRecommendations = [];
-  flat.forEach((x) => (x.report.sections?.recommendations?.data?.recommendations || []).forEach((r) => allRecommendations.push({ ...r, unitName: x.unit.name })));
-  const allImpact = [];
-  flat.forEach((x) => (x.report.sections?.impact?.data?.impactStories || []).forEach((s) => allImpact.push({ ...s, unitName: x.unit.name })));
+  // أعلى الإنجازات ذات الأثر — الأعمال المعتمدة من الأقسام أولاً، ثم الباقي
+  const achievementsAll = [];
+  flat.forEach((x) => (x.report.sections?.programs?.data?.programs || []).filter((p) => p.highlightResult).forEach((p) => {
+    achievementsAll.push({ unitName: x.unit.name, name: p.name, highlightResult: p.highlightResult, curated: isItemCurated(x.unit, curationKey("achievement", x.report.id, p.id)) });
+  }));
+  const achievements = sortCurated(achievementsAll).slice(0, 10);
+  // نقاط القوة المشتركة
+  const strengthsAll = [];
+  flat.forEach((x) => (x.report.sections?.strengths?.data?.strengths || []).forEach((s) => {
+    strengthsAll.push({ unitName: x.unit.name, name: s.name, area: s.area, curated: isItemCurated(x.unit, curationKey("strength", x.report.id, s.id)) });
+  }));
+  const strengths = sortCurated(strengthsAll).slice(0, 10);
+  // الصعوبات المتكررة والخطيرة — معتمدة القسم أولاً، ثم الأعلى خطورة
+  const severityRank = { "حرج": 3, "مرتفع": 2, "متوسط": 1, "منخفض": 0 };
+  const challengesAll = [];
+  flat.forEach((x) => (x.report.sections?.challenges?.data?.challenges || []).forEach((c) => {
+    challengesAll.push({ ...c, unitName: x.unit.name, curated: isItemCurated(x.unit, curationKey("challenge", x.report.id, c.id)) });
+  }));
+  const allChallenges = [...challengesAll].sort((a, b) => (b.curated ? 1 : 0) - (a.curated ? 1 : 0) || (severityRank[b.severity] || 0) - (severityRank[a.severity] || 0)).slice(0, 10);
+  // التوصيات التي تحتاج قرار الإدارة — معتمدة أولاً، ثم الأعلى أولوية
+  const priorityRank = { "عاجلة": 3, "عالية": 2, "متوسطة": 1, "منخفضة": 0 };
+  const recsAll = [];
+  flat.forEach((x) => (x.report.sections?.recommendations?.data?.recommendations || []).forEach((r) => {
+    recsAll.push({ ...r, unitName: x.unit.name, curated: isItemCurated(x.unit, curationKey("recommendation", x.report.id, r.id)) });
+  }));
+  const allRecommendations = [...recsAll].sort((a, b) => (b.curated ? 1 : 0) - (a.curated ? 1 : 0) || (priorityRank[b.priority] || 0) - (priorityRank[a.priority] || 0)).slice(0, 10);
+  // المبادرات القابلة للتعميم
+  const initiativesAll = [];
+  flat.forEach((x) => (x.report.sections?.initiatives?.data?.initiatives || []).forEach((it) => initiativesAll.push({ ...it, unitName: x.unit.name })));
+  const scalableInitiatives = initiativesAll.filter((it) => it.scalability).slice(0, 10);
+  // أولويات الفترة القادمة
+  const nextTasksAll = [];
+  flat.forEach((x) => (x.report.sections?.nextplan?.data?.mainTasks || []).forEach((t) => nextTasksAll.push({ ...t, unitName: x.unit.name })));
 
   const cover = `
   <section class="a4-page rpt-cover">
@@ -1292,7 +1432,7 @@ function renderExecutiveFinalReport() {
       <div class="rpt-cover-unit">الإدارة العليا</div>
       <div class="rpt-cover-divider"></div>
       <h1 class="rpt-cover-title">التقرير الإداري النهائي</h1>
-      <div class="rpt-cover-sub">تقرير مجمّع لجميع الأقسام والوحدات</div>
+      <div class="rpt-cover-sub">تقرير منتقى — أبرز ما يستحق قرار الإدارة، لا كل البيانات</div>
       <div class="rpt-cover-meta">
         <div><span>عدد الأقسام:</span> ${activeDepartments.length}</div>
         <div><span>عدد الوحدات:</span> ${activeUnits.length}</div>
@@ -1310,7 +1450,8 @@ function renderExecutiveFinalReport() {
       ${statIconCardHtml("نسبة الإنجاز", completionPct + "٪", iconGauge("var(--rpt-burgundy)", 18), "#f4ece4")}
       ${statIconCardHtml("عدد الأقسام", activeDepartments.length, iconBuilding("var(--rpt-burgundy)", 18), "#f4ece4")}
       ${statIconCardHtml("عدد الوحدات", activeUnits.length, iconLayers(18, "var(--rpt-burgundy)"), "#f4ece4")}
-    </div>`;
+    </div>
+    <div class="hint">⭐ = عنصر اعتمدته مديرة القسم كأبرز نتيجة تستحق وصول الإدارة العليا.</div>`;
 
   const deptRows = activeDepartments.map((dept) => {
     const deptUnits = S.units.filter((u) => u.departmentId === dept.id && u.status === "active");
@@ -1323,14 +1464,13 @@ function renderExecutiveFinalReport() {
     const p = computeProgress(latestReportForUnit(u.id));
     return [esc(u.name), esc(dept ? dept.name : "—"), p.percent + "٪"];
   });
-  const goalsChapterBody = allGoals.length ? reportTable(["الوحدة", "الهدف التشغيلي", "المستوى", "النسبة"], allGoals.slice(0, 20).map((g) => {
-    const gm = goalLevelMeta(g.level);
-    return [esc(g.unitName), esc(g.name), g.level ? badgeHtml(g.level, gm.color, gm.bg) : "—", g.percentage !== "" ? g.percentage + "٪" : "—"];
-  })) : emptyHint("لا توجد أهداف مُدخلة بعد.");
   const indicatorsChapterBody = allIndicators.length ? reportTable(["الوحدة", "المؤشر", "المتحقق"], allIndicators.slice(0, 20).map((r) => [esc(r.unitName), esc(r.name), esc(r.actual || "—")])) : emptyHint("لا توجد مؤشرات مُدخلة بعد.");
-  const challengesChapterBody = allChallenges.length ? reportTable(["الوحدة", "الصعوبة", "المستوى"], allChallenges.slice(0, 20).map((c) => { const sm = challengeSeverityMeta(c.severity); return [esc(c.unitName), esc(c.name || "—"), c.severity ? badgeHtml(c.severity, sm.color, sm.bg) : "—"]; })) : emptyHint("لا توجد تحديات مُدخلة بعد.");
-  const recsChapterBody = allRecommendations.length ? reportTable(["الوحدة", "التوصية", "الأولوية"], allRecommendations.slice(0, 20).map((r) => { const pm = improvementPriorityMeta(r.priority); return [esc(r.unitName), esc(r.text || "—"), r.priority ? badgeHtml(r.priority, pm.color, pm.bg) : "—"]; })) : emptyHint("لا توجد توصيات مُدخلة بعد.");
-  const impactChapterBody = allImpact.length ? reportTable(["الوحدة", "عنوان قصة الأثر", "نوع الأثر"], allImpact.slice(0, 20).map((s) => [esc(s.unitName), esc(s.title || "—"), esc(s.impactType || "—")])) : emptyHint("لا توجد قصص أثر مُدخلة بعد.");
+  const achievementsChapterBody = achievements.length ? reportTable(["الوحدة", "العمل", "الأثر", ""], achievements.map((a) => [esc(a.unitName), esc(a.name || "—"), esc(a.highlightResult), starTd(a.curated)])) : emptyHint("لا توجد إنجازات بارزة مُدخلة بعد.");
+  const strengthsChapterBody = strengths.length ? reportTable(["الوحدة", "نقطة القوة", "المجال", ""], strengths.map((s) => [esc(s.unitName), esc(s.name || "—"), esc(s.area || "—"), starTd(s.curated)])) : emptyHint("لا توجد نقاط قوة مُدخلة بعد.");
+  const challengesChapterBody = allChallenges.length ? reportTable(["الوحدة", "الصعوبة", "المستوى", ""], allChallenges.map((c) => { const sm = challengeSeverityMeta(c.severity); return [esc(c.unitName), esc(c.name || "—"), c.severity ? badgeHtml(c.severity, sm.color, sm.bg) : "—", starTd(c.curated)]; })) : emptyHint("لا توجد تحديات مُدخلة بعد.");
+  const recsChapterBody = allRecommendations.length ? reportTable(["الوحدة", "التوصية", "الأولوية", ""], allRecommendations.map((r) => { const pm = improvementPriorityMeta(r.priority); return [esc(r.unitName), esc(r.text || "—"), r.priority ? badgeHtml(r.priority, pm.color, pm.bg) : "—", starTd(r.curated)]; })) : emptyHint("لا توجد توصيات مُدخلة بعد.");
+  const initiativesChapterBody = scalableInitiatives.length ? reportTable(["الوحدة", "اسم المبادرة", "قابلية التعميم"], scalableInitiatives.map((it) => [esc(it.unitName), esc(it.name || "—"), esc(it.scalability || "—")])) : emptyHint("لا توجد مبادرات قابلة للتعميم مُدخلة بعد.");
+  const nextTasksChapterBody = nextTasksAll.length ? reportTable(["الوحدة", "العمل الرئيسي القادم", "الموعد المتوقع"], nextTasksAll.slice(0, 20).map((t) => [esc(t.unitName), esc(t.name || "—"), esc(t.expectedDate || "—")])) : emptyHint("لم تُضف أولويات للفترة القادمة بعد.");
 
   const closing = `
     <div class="rpt-approval-grid">
@@ -1343,14 +1483,15 @@ function renderExecutiveFinalReport() {
     ${cover}
     <section class="a4-page">
       ${summaryChapter}
-      ${execChapterHtml(2, iconBuilding2, "الأقسام", reportTable(["القسم", "عدد الوحدات", "متوسط الإنجاز"], deptRows))}
-      ${execChapterHtml(3, iconLayers, "الوحدات", reportTable(["الوحدة", "القسم", "نسبة الإنجاز"], unitRows))}
-      ${execChapterHtml(4, iconTarget, "الأهداف والنتائج", goalsChapterBody)}
-      ${execChapterHtml(5, iconGauge2, "المؤشرات ونسب الإنجاز", indicatorsChapterBody)}
-      ${execChapterHtml(6, iconBell, "التحديات", challengesChapterBody)}
-      ${execChapterHtml(7, iconPencil, "التوصيات", recsChapterBody)}
-      ${execChapterHtml(8, iconSparkles, "الأثر والنتائج", impactChapterBody)}
-      ${execChapterHtml(9, iconCheckCircle, "الخاتمة والاعتماد", closing)}
+      ${execChapterHtml(2, iconBuilding2, "مستوى أداء الأقسام والوحدات", reportTable(["القسم", "عدد الوحدات", "متوسط الإنجاز"], deptRows) + reportTable(["الوحدة", "القسم", "نسبة الإنجاز"], unitRows))}
+      ${execChapterHtml(3, iconGauge2, "المؤشرات والأرقام", indicatorsChapterBody)}
+      ${execChapterHtml(4, iconSparkles, "أعلى الإنجازات ذات الأثر", achievementsChapterBody)}
+      ${execChapterHtml(5, iconCheckCircle, "نقاط القوة المشتركة", strengthsChapterBody)}
+      ${execChapterHtml(6, iconBell, "الصعوبات المتكررة والخطيرة", challengesChapterBody)}
+      ${execChapterHtml(7, iconPencil, "التوصيات التي تحتاج قرار الإدارة", recsChapterBody)}
+      ${execChapterHtml(8, iconLayers, "المبادرات القابلة للتعميم", initiativesChapterBody)}
+      ${execChapterHtml(9, iconCalendarSmall, "أولويات الفترة القادمة", nextTasksChapterBody)}
+      ${execChapterHtml(10, iconCheckCircle, "الخاتمة والاعتماد", closing)}
     </section>`;
 
   return `
@@ -3074,6 +3215,23 @@ function attachClickListener() {
         const current = S.sectionDraft.checklist || {};
         S.sectionDraft.checklist = { ...current, [key]: !current[key] };
         render();
+        break;
+      }
+      case "toggle-dept-curation": {
+        const dept = S.departments.find((d) => d.id === S.currentDepartmentId);
+        if (dept) toggleDeptCuration(dept, ds.key);
+        render();
+        break;
+      }
+      case "generate-ai-summary": {
+        if (!sheetsConfigured()) {
+          S.ui.aiSummaryError = "هذي الميزة تحتاج ربط الموقع بقاعدة البيانات أولاً.";
+          render();
+          break;
+        }
+        S.ui.aiSummaryBusy = true; S.ui.aiSummaryError = ""; S.ui.aiSummaryText = "";
+        render();
+        generateAiSummaryAsync();
         break;
       }
 
