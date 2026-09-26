@@ -164,7 +164,7 @@ const MANAGER_NOTE_OPTIONS = ["معتمد دون ملاحظات", "معتمد ب
    the app works exactly as before — pure localStorage + the demo accounts
    below. Once you paste a URL here, login and unit/department management
    switch to reading and writing your Google Sheet instead. */
-const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbxNQse7vgnAgkBZaOeORo90k6Eeb3Btf8S8Ei_XNBWC_fsOWiG98GUIvVteOUHQloW_/exec";
+const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbwKf9MuuHoAKSwbWKJ4fyLERi1OCHh61V5KGPkCQRkk5pYdm289dOHJ0c2_mGi_bHeB/exec";
 
 async function callSheetsApi(action, payload) {
   if (!SHEETS_API_URL) return { ok: false, error: "لم يتم ربط الموقع بجوجل شيت بعد" };
@@ -490,7 +490,7 @@ function render() {
   } else if (S.view === "site-settings") {
     html = shellWrap(renderSiteSettings());
   } else if (S.view === "departments-list") {
-    html = shellWrap(renderEntityPickerPage("departments"));
+    html = shellWrap(renderDepartmentsPage());
   } else if (S.view === "units-list") {
     html = shellWrap(renderEntityPickerPage("units"));
   } else if (S.view === "centers-list") {
@@ -525,8 +525,6 @@ function render() {
     html = shellWrap(renderReportPreview());
   } else if (S.view === "offices-manage") {
     html = shellWrap(renderOfficesManagePage());
-  } else if (S.view === "office-dashboard") {
-    html = shellWrap(renderOfficeDashboard());
   } else {
     html = renderLogin();
   }
@@ -559,7 +557,7 @@ const SIDEBAR_PAGES = [
   { id: "goals-manage", label: "إدارة الأهداف والمستهدفات", group: "إدارة التقارير", icon: "target" },
   { id: "units-manage", label: "المستخدمون", group: "المستخدمون", icon: "building" },
   { id: "offices-manage", label: "مكاتب الإشراف", group: "المستخدمون", icon: "layers" },
-  { id: "departments-list", label: "قسمي", group: "الأقسام", icon: "building" },
+  { id: "departments-list", label: "الأقسام", group: "الأقسام", icon: "building" },
   { id: "units-list", label: "تقاريري", group: "الوحدات", icon: "document" },
   { id: "centers-list", label: "تقاريري", group: "المراكز", icon: "document" },
   { id: "department-overview", label: "قسمي", group: "الرئيسية", icon: "building" },
@@ -570,7 +568,6 @@ const SIDEBAR_PAGES = [
   { id: "unit-reports", label: "تقارير", group: "unit-home", scope: "unit", icon: "document" },
   { id: "unit-report", label: "إنشاء تقرير", group: "unit-home", icon: "pencil" },
   { id: "unit-settings", label: "الإعدادات", group: "unit-home", scope: "unit", icon: "gauge" },
-  { id: "office-dashboard", label: "الأقسام التابعة", group: "الرئيسية", icon: "building" },
 ];
 const SIDEBAR_GROUPS = ["الرئيسية", "إدارة التقارير", "المستخدمون", "الأقسام", "الوحدات", "المراكز", "الإدارة العليا", "unit-home"];
 const SIDEBAR_GROUP_LABELS = { "unit-home": "الرئيسية" };
@@ -593,7 +590,7 @@ function computeVisibleSidebarPages() {
   } else if (S.isExecutive) {
     return SIDEBAR_PAGES.filter((p) => p.group === "الإدارة العليا" || p.id === "all-reports");
   } else if (S.isOfficeUser) {
-    return SIDEBAR_PAGES.filter((p) => p.id === "office-dashboard");
+    return SIDEBAR_PAGES.filter((p) => p.id === "departments-list");
   }
   // موظفة الوحدة أو المركز: تشوف "تقاريري" + "جميع التقارير" — بدون
   // "الأقسام والوحدات" (ذاك رابط إشرافي خاص بمديرة النظام).
@@ -944,8 +941,8 @@ function doLogin(user) {
     // اطلاع مكتب الإشراف: يشوف فقط الأقسام التابعة له، وعند اختيار قسم يشوف
     // وحداته — بدون أي دخول لتقارير الوحدات أو تعديلها (خارج نطاق هذي الخطوة).
     S.currentOfficeId = user.officeId || "";
-    S.ui.officeSelectedDeptId = null;
-    S.view = "office-dashboard";
+    S.ui.departmentsPageSelectedId = null;
+    S.view = "departments-list";
   } else {
     const unitId = user.unitId;
     S.reports[unitId] = dataStore.getReports(unitId);
@@ -1372,6 +1369,43 @@ function unitCardHtml(unit, department, report) {
       ${badgeHtml(meta.label, meta.color, meta.bg)}
     </div>
   </div>`;
+}
+
+// صفحة "الأقسام" الموحّدة: مديرة النظام تشوف كل الأقسام، ومكتب الإشراف يشوف فقط
+// الأقسام المرتبطة به (عبر officeId) — بنفس العلاقة الموجودة فعليًا، بدون أي
+// بيانات مكررة. الضغط على قسم يعرض الوحدات التابعة له فقط (اطلاع، بدون تقارير).
+function renderDepartmentsPage() {
+  const scopedDepartments = S.isOfficeUser ? S.departments.filter((d) => d.officeId === S.currentOfficeId) : S.departments;
+  const selectedDept = S.ui.departmentsPageSelectedId ? scopedDepartments.find((d) => d.id === S.ui.departmentsPageSelectedId) : null;
+
+  if (selectedDept) {
+    const units = S.units.filter((u) => u.departmentId === selectedDept.id);
+    return `
+    <div class="page-wrap"><div class="page-inner">
+      ${topBarHtml({ title: selectedDept.name, subtitle: "الوحدات التابعة للقسم", backAction: "departments-page-back",
+        right: S.isOfficeUser ? pillBtn("خروج", { variant: "danger", icon: iconLogout(15, DANGER), action: "logout" }) : undefined })}
+      ${units.length === 0 ? `<div class="card" style="text-align:center;color:${SUBTLE};padding:36px;">لا توجد وحدات في هذا القسم بعد.</div>` :
+        `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;">${units.map((u) => `
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="width:34px;height:34px;border-radius:10px;background:${DANGER_BG};display:flex;align-items:center;justify-content:center;flex-shrink:0;">${iconBuilding(ROSE, 16)}</div>
+              <div style="font-size:13.5px;font-weight:700;">${esc(u.name)} ${u.role === "center" ? `<span style="font-size:9.5px;font-weight:700;color:${GOLD};background:${GOLD_BG};padding:1px 6px;border-radius:999px;">مركز</span>` : ""}</div>
+            </div>
+          </div>`).join("")}</div>`}
+    </div></div>`;
+  }
+
+  return `
+  <div class="page-wrap"><div class="page-inner">
+    ${topBarHtml({ title: "الأقسام", subtitle: `${scopedDepartments.length} — اضغطي على قسم لعرض الوحدات التابعة له`,
+      right: S.isOfficeUser ? pillBtn("خروج", { variant: "danger", icon: iconLogout(15, DANGER), action: "logout" }) : undefined })}
+    ${scopedDepartments.length === 0 ? `<div class="card" style="text-align:center;color:${SUBTLE};padding:36px;">لا توجد أقسام${S.isOfficeUser ? " مرتبطة بهذا المكتب بعد" : ""}.</div>` :
+      `<div style="display:flex;flex-direction:column;gap:8px;">${scopedDepartments.map((d) => `
+        <button class="card" style="display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:1px solid ${BORDER};cursor:pointer;text-align:right;opacity:${d.status === "active" ? 1 : 0.6}" data-action="departments-page-open" data-id="${esc(d.id)}">
+          <span style="font-size:13.5px;font-weight:700;">${esc(d.name)}${d.status !== "active" ? ` <span style="font-size:10.5px;color:${SUBTLE};font-weight:600;">(معطّل)</span>` : ""}</span>
+          <span style="font-size:11px;color:${SUBTLE};display:flex;align-items:center;gap:6px;">${S.units.filter((u) => u.departmentId === d.id).length} وحدة/مركز ${iconChevronLeft(14, SUBTLE)}</span>
+        </button>`).join("")}</div>`}
+  </div></div>`;
 }
 
 // صفحة اختيار مبسّطة لمديرة النظام — تفتح نفس واجهة "قسمي" أو "تقاريري" الحقيقية
@@ -4234,6 +4268,8 @@ function attachClickListener() {
       case "logout": doLogout(); break;
       case "open-office-department": S.ui.officeSelectedDeptId = ds.id; render(); break;
       case "office-back-to-departments": S.ui.officeSelectedDeptId = null; render(); break;
+      case "departments-page-open": S.ui.departmentsPageSelectedId = ds.id; render(); break;
+      case "departments-page-back": S.ui.departmentsPageSelectedId = null; render(); break;
       case "offices-manage-open-office": S.ui.officesManageOfficeId = ds.id; S.ui.officesManageDeptId = null; render(); break;
       case "offices-manage-back-to-list": S.ui.officesManageOfficeId = null; S.ui.officesManageDeptId = null; render(); break;
       case "offices-manage-open-department": S.ui.officesManageDeptId = ds.id; render(); break;
