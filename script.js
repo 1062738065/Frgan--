@@ -23,7 +23,7 @@ const PALETTE = [
   { bg: "#f3edef", fg: "#6b5a62" },
 ];
 
-const SECTIONS = [
+const DEFAULT_SECTIONS = [
   { id: "basic", label: "البيانات الأساسية" },
   { id: "goals", label: "الأهداف والمستهدفات" },
   { id: "kpi", label: "مؤشرات الأداء" },
@@ -40,6 +40,10 @@ const SECTIONS = [
   { id: "evidence", label: "الشواهد والمرفقات" },
   { id: "review", label: "المراجعة والاعتماد" },
 ];
+// SECTIONS يبدأ بنسخة من القائمة الافتراضية، ثم يُستبدل بالقائمة الفعلية
+// المُدارة (إدارة أقسام التقرير) بعد تحميلها من الشيت أو التخزين المحلي —
+// applyReportSectionDefs() هو ما يعيد بناءه.
+let SECTIONS = DEFAULT_SECTIONS.map((s) => ({ ...s }));
 const GENERIC_SECTION_IDS = [];
 
 const PHASES = [
@@ -164,7 +168,7 @@ const MANAGER_NOTE_OPTIONS = ["معتمد دون ملاحظات", "معتمد ب
    the app works exactly as before — pure localStorage + the demo accounts
    below. Once you paste a URL here, login and unit/department management
    switch to reading and writing your Google Sheet instead. */
-const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbxNQse7vgnAgkBZaOeORo90k6Eeb3Btf8S8Ei_XNBWC_fsOWiG98GUIvVteOUHQloW_/exec";
+const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbwKf9MuuHoAKSwbWKJ4fyLERi1OCHh61V5KGPkCQRkk5pYdm289dOHJ0c2_mGi_bHeB/exec";
 
 async function callSheetsApi(action, payload) {
   if (!SHEETS_API_URL) return { ok: false, error: "لم يتم ربط الموقع بجوجل شيت بعد" };
@@ -192,7 +196,7 @@ const MOCK_USERS = [
 /* =============================== Storage layer ============================= */
 const UNITS_KEY = "prs:units", DEPARTMENTS_KEY = "prs:departments", OFFICES_KEY = "prs:offices",
       INDICATOR_DEFINITIONS_KEY = "prs:indicator-definitions", GOALS_DEFINITIONS_KEY = "prs:goals-definitions",
-      SITE_SETTINGS_KEY = "prs:site-settings";
+      SITE_SETTINGS_KEY = "prs:site-settings", REPORT_SECTIONS_KEY = "prs:report-sections";
 const DEFAULT_SITE_COLORS = { primary: "#6b2337", background: "#F2ECE8" };
 const reportKey = (unitId) => `prs:report:${unitId}`;
 const reportsKey = (unitId) => `prs:reports:${unitId}`;
@@ -312,6 +316,12 @@ const dataStore = {
     if (sheetsConfigured()) callSheetsApi("saveGoalsDefinitions", { definitions: d }).catch(() => {});
   },
   cacheGoalsDefinitionsLocally(d) { lsSet(GOALS_DEFINITIONS_KEY, JSON.stringify(d)); },
+  getReportSectionDefs() { const v = lsGet(REPORT_SECTIONS_KEY); return v ? JSON.parse(v) : DEFAULT_SECTIONS.map((s, i) => ({ id: s.id, label: s.label, order: i, enabled: true })); },
+  saveReportSectionDefs(list) {
+    lsSet(REPORT_SECTIONS_KEY, JSON.stringify(list));
+    if (sheetsConfigured()) callSheetsApi("saveSectionDefs", { defs: list }).catch(() => {});
+  },
+  cacheReportSectionDefsLocally(list) { lsSet(REPORT_SECTIONS_KEY, JSON.stringify(list)); },
   // Each unit now holds a LIST of report entries (one per period/submission),
   // each carrying its own status: draft / under_review / completed.
   // A unit that only ever had the old single-report shape (prs:report:<id>)
@@ -454,6 +464,7 @@ const S = {
   offices: [],
   indicatorDefinitions: [],
   goalsDefinitions: { strategic: [], operational: [] },
+  reportSectionDefs: DEFAULT_SECTIONS.map((s, i) => ({ id: s.id, label: s.label, order: i, enabled: true })),
   reports: {},
   view: "login",
   currentUnitId: null,
@@ -518,6 +529,8 @@ function render() {
     html = shellWrap(renderIndicatorsManage());
   } else if (S.view === "goals-manage") {
     html = shellWrap(renderGoalsManage());
+  } else if (S.view === "sections-manage") {
+    html = shellWrap(renderSectionsManage());
   } else if (S.view === "unit-dashboard") {
     html = shellWrap(renderUnitDashboard());
   } else if (S.view === "unit-settings") {
@@ -568,6 +581,7 @@ const SIDEBAR_PAGES = [
   { id: "all-reports", label: "جميع التقارير", group: "standalone", icon: "document" },
   { id: "indicators-manage", label: "إدارة مؤشرات الأداء", group: "إدارة التقارير", icon: "gauge" },
   { id: "goals-manage", label: "إدارة الأهداف والمستهدفات", group: "إدارة التقارير", icon: "target" },
+  { id: "sections-manage", label: "إدارة أقسام التقرير", group: "إدارة التقارير", icon: "layers" },
   { id: "units-manage", label: "المستخدمون", group: "standalone", icon: "building" },
   { id: "offices-manage", label: "مكاتب الإشراف", group: "الهيكل التنظيمي", icon: "layers" },
   { id: "departments-list", label: "الأقسام", group: "الهيكل التنظيمي", icon: "building" },
@@ -916,6 +930,7 @@ async function refreshUnitsAndDepartmentsFromSheet() {
     callSheetsApi("getUnits"),
     callSheetsApi("getDepartments"),
     callSheetsApi("getOffices"),
+    refreshReportSectionsFromSheet(),
   ]);
   if (unitsRes.ok && Array.isArray(unitsRes.data)) {
     S.units = unitsRes.data;
@@ -956,6 +971,31 @@ async function refreshGoalsDefinitionsFromSheet() {
   }
 }
 
+// يبني متغيّر SECTIONS الفعلي (المستخدم في كل مكان بالتطبيق) من قائمة التعريفات
+// الكاملة: يستبعد الأقسام المعطّلة ويرتّب الباقي حسب order.
+function applyReportSectionDefs(list) {
+  const defs = Array.isArray(list) && list.length ? list : DEFAULT_SECTIONS.map((s, i) => ({ id: s.id, label: s.label, order: i, enabled: true }));
+  S.reportSectionDefs = defs;
+  SECTIONS = defs.filter((s) => s.enabled !== false).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map((s) => ({ id: s.id, label: s.label }));
+  if (!SECTIONS.length) SECTIONS = DEFAULT_SECTIONS.map((s) => ({ ...s })); // شبكة أمان: لا يبقى النظام بلا أقسام أبدًا
+}
+
+async function refreshReportSectionsFromSheet() {
+  if (!sheetsConfigured()) return;
+  const res = await callSheetsApi("getSectionDefs");
+  if (res.ok && Array.isArray(res.data)) {
+    if (res.data.length) {
+      applyReportSectionDefs(res.data);
+      dataStore.cacheReportSectionDefsLocally(res.data);
+    } else {
+      // الشيت موجود لكنه فارغ (أول مرة) — نزرعه بالقائمة الافتراضية مرة واحدة.
+      const seed = DEFAULT_SECTIONS.map((s, i) => ({ id: s.id, label: s.label, order: i, enabled: true }));
+      applyReportSectionDefs(seed);
+      dataStore.saveReportSectionDefs(seed);
+    }
+  }
+}
+
 async function refreshSiteSettingsFromSheet() {
   if (!sheetsConfigured()) return;
   const res = await callSheetsApi("getSiteSettings");
@@ -989,6 +1029,7 @@ function doLogin(user) {
   S.offices = dataStore.getOffices();
   S.indicatorDefinitions = dataStore.getIndicatorDefinitions();
   S.goalsDefinitions = dataStore.getGoalsDefinitions();
+  applyReportSectionDefs(dataStore.getReportSectionDefs());
   S.sidebarOpen = !isMobileViewport();
   if (S.isAdmin) {
     const reports = {};
@@ -2839,6 +2880,65 @@ function renderGoalsManage() {
   </div></div>`;
 }
 
+/* =============================== Report sections management =================== */
+function sortedSectionDefs() {
+  return (S.reportSectionDefs || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+function sectionDefRowHtml(def, index, total) {
+  const editing = S.ui.editingSectionId === def.id;
+  const enabled = def.enabled !== false;
+  const isCustom = !DEFAULT_SECTIONS.some((s) => s.id === def.id);
+  if (editing) {
+    return `<div class="card" style="display:flex;gap:6px;">
+      <input class="input" id="edit-section-name" style="flex:1;" value="${esc(S.ui.editSectionValue || "")}" />
+      <button data-action="save-section-edit" data-id="${esc(def.id)}" style="background:${GREEN_BG};border:none;border-radius:8px;padding:0 10px;cursor:pointer;">${iconCheck(16, GREEN)}</button>
+      <button data-action="cancel-section-edit" style="background:${DANGER_BG};border:none;border-radius:8px;padding:0 10px;cursor:pointer;">${iconX(16, DANGER)}</button>
+    </div>`;
+  }
+  return `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;${enabled ? "" : "opacity:.55;"}">
+    <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+      <div style="width:34px;height:34px;border-radius:10px;background:${GOLD_BG};display:flex;align-items:center;justify-content:center;flex-shrink:0;">${iconLayers(16, GOLD)}</div>
+      <div style="min-width:0;">
+        <div style="font-size:13.5px;font-weight:700;">${esc(def.label)}${!enabled ? ` <span style="font-size:10px;color:${SUBTLE};font-weight:600;">(معطّل)</span>` : ""}</div>
+        <div style="font-size:10.5px;color:${SUBTLE};margin-top:2px;">${isCustom ? "قسم مضاف — يستخدم حقل نصي عام حتى يُصمَّم له نموذج خاص" : "قسم أساسي بنموذج مخصص"}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      <button class="icon-btn" style="width:32px;height:32px;border:1px solid ${BORDER}" data-action="move-report-section" data-id="${esc(def.id)}" data-dir="up" ${index === 0 ? "disabled" : ""} title="نقل لأعلى">${iconChevronUp(14, INK)}</button>
+      <button class="icon-btn" style="width:32px;height:32px;border:1px solid ${BORDER}" data-action="move-report-section" data-id="${esc(def.id)}" data-dir="down" ${index === total - 1 ? "disabled" : ""} title="نقل لأسفل">${iconChevronDown(14, INK)}</button>
+      <button class="icon-btn" style="width:32px;height:32px;border:1px solid ${BORDER}" data-action="start-section-edit" data-id="${esc(def.id)}" data-name="${esc(def.label)}" title="تعديل الاسم">${iconPencil(14, INK)}</button>
+      <button class="icon-btn" style="width:32px;height:32px;background:${enabled ? DANGER_BG : GREEN_BG}" data-action="toggle-report-section" data-id="${esc(def.id)}" title="${enabled ? "تعطيل" : "تفعيل"}">${iconPower(14, enabled ? DANGER : GREEN)}</button>
+    </div>
+  </div>`;
+}
+function renderSectionsManage() {
+  const defs = sortedSectionDefs();
+  return `
+  <div class="page-wrap"><div class="page-inner narrow">
+    ${topBarHtml({ title: "إدارة أقسام التقرير", subtitle: "تحكّمي بأقسام نموذج التقرير: الترتيب، الأسماء، وتفعيلها أو تعطيلها", backAction: "nav-back-admin" })}
+
+    <div class="card" style="background:${BLUE_BG};border:1px solid #cfe0f5;margin-bottom:18px;">
+      <div style="font-size:11.5px;color:#3a5a85;line-height:1.7;">
+        الأقسام الأساسية (البيانات الأساسية، الأهداف، مؤشرات الأداء...) لها نماذج مصمّمة خصيصًا لها ولا يمكن حذفها — فقط إعادة ترتيبها أو تعطيلها مؤقتًا.
+        أي قسم جديد تضيفينه هنا سيظهر مباشرة في نموذج التقرير بحقل نصي عام، إلى أن يُصمَّم له شكل خاص لاحقًا.
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:22px;">
+      <div style="font-size:12.5px;font-weight:800;color:${ROSE};margin-bottom:12px;">إضافة قسم جديد</div>
+      <div style="display:flex;gap:8px;">
+        <input class="input" id="new-report-section-name" style="flex:1;" placeholder="اسم القسم الجديد" />
+        ${pillBtn("إضافة", { icon: iconPlus(15, "#fff"), action: "add-report-section" })}
+      </div>
+    </div>
+
+    <div style="font-size:12.5px;font-weight:800;color:${ROSE};margin-bottom:10px;">الأقسام (${defs.length})</div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${defs.map((d, i) => sectionDefRowHtml(d, i, defs.length)).join("")}
+    </div>
+  </div></div>`;
+}
+
 /* =============================== Generic data-binding helpers ================ */
 // Every editable field in the report editor carries data-field (top level)
 // or data-arr/data-id/data-field (item inside a repeatable array), optionally
@@ -4594,6 +4694,8 @@ function attachClickListener() {
             refreshIndicatorDefinitionsFromSheet().then(() => { if (S.view === ds.view) render(); });
           } else if (ds.view === "goals-manage") {
             refreshGoalsDefinitionsFromSheet().then(() => { if (S.view === ds.view) render(); });
+          } else if (ds.view === "sections-manage") {
+            refreshReportSectionsFromSheet().then(() => { if (S.view === ds.view) render(); });
           } else if (ds.view === "unit-reports" && S.currentUnitId) {
             refreshReportsFromSheet(S.currentUnitId).then(() => { if (S.view === ds.view) render(); });
           }
@@ -5133,6 +5235,48 @@ function attachClickListener() {
         }
         render();
         break;
+      }
+      case "add-report-section": {
+        const inputEl = document.getElementById("new-report-section-name");
+        const label = (inputEl.value || "").trim();
+        if (!label) break;
+        const list = sortedSectionDefs();
+        const nextOrder = list.length ? Math.max(...list.map((s) => s.order ?? 0)) + 1 : 0;
+        const newDef = { id: uid("sec"), label, order: nextOrder, enabled: true };
+        const updated = [...list, newDef];
+        applyReportSectionDefs(updated);
+        dataStore.saveReportSectionDefs(updated);
+        inputEl.value = "";
+        render();
+        break;
+      }
+      case "start-section-edit": { S.ui.editingSectionId = ds.id; S.ui.editSectionValue = ds.name; render(); break; }
+      case "cancel-section-edit": { S.ui.editingSectionId = null; render(); break; }
+      case "save-section-edit": {
+        const val = document.getElementById("edit-section-name").value.trim();
+        if (val) {
+          const updated = sortedSectionDefs().map((s) => s.id === ds.id ? { ...s, label: val } : s);
+          applyReportSectionDefs(updated);
+          dataStore.saveReportSectionDefs(updated);
+        }
+        S.ui.editingSectionId = null; render(); break;
+      }
+      case "toggle-report-section": {
+        const updated = sortedSectionDefs().map((s) => s.id === ds.id ? { ...s, enabled: s.enabled === false } : s);
+        applyReportSectionDefs(updated);
+        dataStore.saveReportSectionDefs(updated);
+        render(); break;
+      }
+      case "move-report-section": {
+        const list = sortedSectionDefs();
+        const i = list.findIndex((s) => s.id === ds.id);
+        const j = ds.dir === "up" ? i - 1 : i + 1;
+        if (i < 0 || j < 0 || j >= list.length) break;
+        const oi = list[i].order ?? i, oj = list[j].order ?? j;
+        list[i] = { ...list[i], order: oj }; list[j] = { ...list[j], order: oi };
+        applyReportSectionDefs(list);
+        dataStore.saveReportSectionDefs(list);
+        render(); break;
       }
       default: handleDynamicGoalAction(action, ds) || handleReportEditorAction(action, ds, e) ;
     }
