@@ -32,6 +32,8 @@
     شغّليها بعد نشر Code.gs الجديد، وبعد تشغيل migrateLegacyData.
   </div>
 
+  <div class="card note">نسخة الأداة: 2 — رابط الشيت ينتهي بـ <b dir="ltr">…OUHQloW_/exec</b></div>
+
   <div class="card" id="list"></div>
 
   <button id="check" class="alt">١) فحص فقط (بدون نسخ)</button>
@@ -42,13 +44,24 @@
 
 <script>
 const SRC = {url:"https://bamirxxstfmgmscwylkg.supabase.co", key:"sb_publishable_f2BGuOJ4vs02gzMPdaP3rQ_PpcZGl1m"};
-const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbwKf9MuuHoAKSwbWKJ4fyLERi1OCHh61V5KGPkCQRkk5pYdm289dOHJ0c2_mGi_bHeB/exec";
+const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbxNQse7vgnAgkBZaOeORo90k6Eeb3Btf8S8Ei_XNBWC_fsOWiG98GUIvVteOUHQloW_/exec";
 
+// نفس طريقة الموقع: GET للطلبات الصغيرة (أضمن مع Safari)، وPOST فقط للكبيرة، مع إعادة محاولة.
 async function sheetsCall(action, payload){
-  const r = await fetch(SHEETS_API_URL, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:JSON.stringify({action, payload})});
-  const j = await r.json();
-  if(!j.ok) throw new Error(j.error || "خطأ من جوجل شيت");
-  return j;
+  const url = SHEETS_API_URL + "?action=" + encodeURIComponent(action) + "&payload=" + encodeURIComponent(JSON.stringify(payload||{}));
+  const useGet = url.length < 1800;
+  let lastErr = null;
+  for(let attempt=0; attempt<3; attempt++){
+    try{
+      const r = useGet
+        ? await fetch(url)
+        : await fetch(SHEETS_API_URL, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:JSON.stringify({action, payload})});
+      const j = await r.json();
+      if(!j.ok) throw Object.assign(new Error(j.error || "خطأ من جوجل شيت"), {fromServer:true});
+      return j;
+    }catch(e){ if(e.fromServer) throw e; lastErr = e; await new Promise(res=>setTimeout(res, 800)); }
+  }
+  throw new Error((useGet ? "GET" : "POST") + " — " + (lastErr && lastErr.message || "network"));
 }
 
 // الجدول، المفتاح الأساسي، الاسم بالعربي، مفعّل افتراضيًا؟، ملاحظة
@@ -86,8 +99,9 @@ async function writeMissing(table, pk, rows){
   const have = await sheetsCall("tableGet", {table});
   const ids = new Set((have.data||[]).map(r => String(r[pk])));
   const fresh = rows.filter(r => !ids.has(String(r[pk])));
-  for(let i=0;i<fresh.length;i+=20){
-    await sheetsCall("tableUpsert", {table, keyCol:pk, rows:fresh.slice(i,i+20), merge:false});
+  // صف واحد بكل طلب: يبقى الطلب صغيرًا فيُرسل GET قدر الإمكان.
+  for(const row of fresh){
+    await sheetsCall("tableUpsert", {table, keyCol:pk, rows:[row], merge:false});
   }
   return fresh.length;
 }
