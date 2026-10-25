@@ -663,7 +663,7 @@ const MANAGER_NOTE_OPTIONS = ["معتمد دون ملاحظات", "معتمد ب
    كل جدول = ورقة باسم db_اسم_الجدول داخل نفس الملف.
    ملاحظة: أسماء الدوال القديمة (supabaseRequest...) باقية كما هي حتى لا يتغير
    باقي الكود، لكنها صارت تتكلم مع جوجل شيت بدل Supabase. */
-const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbwKf9MuuHoAKSwbWKJ4fyLERi1OCHh61V5KGPkCQRkk5pYdm289dOHJ0c2_mGi_bHeB/exec";
+const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbxNQse7vgnAgkBZaOeORo90k6Eeb3Btf8S8Ei_XNBWC_fsOWiG98GUIvVteOUHQloW_/exec";
 
 function dbConnected() { return !!SHEETS_API_URL; }
 
