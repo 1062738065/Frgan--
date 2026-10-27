@@ -658,7 +658,7 @@ function renderSchemaRepeaterHtml(schema, d) {
 /* =============================== Google Sheets =================================
    الموقع يتصل بملف Google Sheets عبر Apps Script (ملف Code.gs). كل جدول = ورقة اسمها db_ + اسم الجدول.
    تبقى أسماء الدوال الداخلية dbRequest… كما هي لأن بقية الكود يستخدمها، لكنها هنا تتصل بالشيت فقط. */
-const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbwKf9MuuHoAKSwbWKJ4fyLERi1OCHh61V5KGPkCQRkk5pYdm289dOHJ0c2_mGi_bHeB/exec";
+const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycbxNQse7vgnAgkBZaOeORo90k6Eeb3Btf8S8Ei_XNBWC_fsOWiG98GUIvVteOUHQloW_/exec";
 
 function dbConnected() { return !!SHEETS_API_URL; }
 
