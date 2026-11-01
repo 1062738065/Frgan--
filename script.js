@@ -1184,7 +1184,20 @@ const dataStore = {
   getDashboardConfig() { try { const v = lsGet(DASHBOARD_CONFIG_KEY); return v ? JSON.parse(v) : {}; } catch (e) { return {}; } },
   saveDashboardConfig(cfg) {
     lsSet(DASHBOARD_CONFIG_KEY, JSON.stringify(cfg));
-    if (dbConnected()) dbRequest("dashboard_config", { method: "POST", prefer: "return=minimal,resolution=merge-duplicates", body: JSON.stringify(dashboardConfigToRow(cfg)) }).then(dbWriteCheck("dashboard_config")).catch(() => {});
+    S.ui = S.ui || {};
+    if (!dbConnected()) { S.ui.dashSync = { s: "local" }; return; }
+    S.ui.dashSync = { s: "wait" };
+    const stable = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, kk) => { o[kk] = x[kk]; return o; }, {}) : x));
+    dbRequest("dashboard_config", { method: "POST", prefer: "return=minimal,resolution=merge-duplicates", body: JSON.stringify(dashboardConfigToRow(cfg)) }).then(async (res) => {
+      dbWriteCheck("dashboard_config")(res);
+      if (!res.ok) S.ui.dashSync = { s: "bad", m: res.error };
+      else {
+        const rb = await dbRequest("dashboard_config?id=eq.main&select=*");
+        const ok = rb.ok && rb.data && rb.data[0] && stable(rb.data[0].config) === stable(cfg);
+        S.ui.dashSync = ok ? { s: "ok" } : { s: "bad", m: rb.ok ? "أُرسل الإعداد لكن لم يُقرأ مطابقًا من القاعدة" : rb.error };
+      }
+      if (S.view === "site-settings") render();
+    }).catch(() => {});
   },
   cacheOfficesLocally(o) { lsSet(OFFICES_KEY, JSON.stringify(o)); },
   getUnits() { const v = lsGet(UNITS_KEY); return v ? JSON.parse(v) : []; },
@@ -3225,6 +3238,16 @@ const DASH_STD_BLOCKS = [
   { key: "programs", label: "جدول الأعمال والبرامج" },
   { key: "routed", label: "المرفوع إليّ (صعوبات وتوصيات وغيرها)", not: ["unit"] },
   { key: "sharedInd", label: "المؤشرات المشتركة بين وحدات" },
+  { key: "exKpis", label: "بطاقات الأرقام مع خط التطور" },
+  { key: "exHeat", label: "خريطة الأداء (المؤشرات)" },
+  { key: "exHeatGoal", label: "خريطة تحقق الأهداف" },
+  { key: "exCompare", label: "مقارنة الوحدات (مؤشرات وأهداف)" },
+  { key: "exStrategic", label: "أهداف الخطة الاستراتيجية" },
+  { key: "exStacks", label: "حالات المؤشرات" },
+  { key: "exBenef", label: "المستفيدون حسب نوع العمل" },
+  { key: "exChal", label: "الصعوبات القائمة" },
+  { key: "exSubm", label: "رفع التقارير واعتمادها" },
+  { key: "exTopBottom", label: "أفضل 5 وأضعف 5 وحدات" },
 ];
 const DASH_STD_KINDS = ["office", "dept", "unit"];
 // لوحة مديرة النظام: متابعة تشغيل الموقع فقط
@@ -3656,7 +3679,8 @@ function dashPeriodBlocksHtml(kind, series) {
    S.ui.exDrill = { office, dept } — الجمعية ← مكتب ← قسم. */
 // التفصيل يمشي على «الهيكل المرن»: الجمعية ← مستوى ← مستوى… (مكتب، مساعدة، قسم…) ← الوحدات.
 // S.ui.exDrill.path = معرّفات المستويات من الأعلى. وحدة غير موجودة في الهيكل تظهر تحت «خارج الهيكل».
-function exScope(units) {
+function exScope(units, flat) {
+  if (flat) return { path: [], cur: null, scopeUnits: units, children: units.map((u) => ({ name: u.name, levelId: null, list: [u], leaf: true })), label: ["الوحدات", "وحدة"] };
   const path = ((S.ui.exDrill && S.ui.exDrill.path) || []).filter((id) => olFind(id));
   const cur = path.length ? olFind(path[path.length - 1]) : null;
   const under = (id) => { const ids = olScopeUnitIds(id); return units.filter((u) => ids.has(u.id)); };
@@ -3674,15 +3698,17 @@ function exScope(units) {
 function exDrillBtn(path, text, style) { return `<button type="button" data-action="ex-drill" data-path="${esc(path.join(","))}" style="background:none;border:none;cursor:pointer;font-family:inherit;${style}">${text}</button>`; }
 function exUnitParent(u) { const l = olActive().find((x) => x.linkKind === "unit" && x.linkId === u.id); const p = l && olFind(l.parentId); if (p) return p.name; const d = (S.departments || []).find((x) => x.id === u.departmentId); return d ? d.name : ""; }
 function exBlocksHtml(kind, units) { return dashMarkWrap(kind, exBlocksInner(kind, units)); }
-function exBlocksInner(kind, units) {
-  const sc = exScope(units);
+// نسخة للوحات الوحدة/القسم/المكتب/السكرتارية: نفس البلوكات بدون مسار التفصيل ولا الفلتر ولا المكرر (التطور/المتابعة/الأبرز)
+function exExtraHtml(kind, units) { return dashMarkWrap(kind, exBlocksInner(kind, units, true)); }
+function exBlocksInner(kind, units, extra) {
+  const sc = exScope(units, extra);
   const series = dashSeries(sc.scopeUnits);
   const latestPct = (u, f) => { const l = dashUnitLatest(series, u.id); return l ? f(l.report) : null; };
   const crumbs = [exDrillBtn([], "الجمعية", `padding:6px 2px;font-size:13px;color:${sc.path.length ? ROSE : INK};font-weight:${sc.path.length ? 600 : 800};`)]
     .concat(sc.path.map((id, k) => exDrillBtn(sc.path.slice(0, k + 1), esc(olFind(id).name), `padding:6px 2px;font-size:13px;color:${k < sc.path.length - 1 ? ROSE : INK};font-weight:${k < sc.path.length - 1 ? 600 : 800};`)));
   const childLabel = sc.label;
   let html = `<nav aria-label="مسار التفصيل" class="card" style="margin-bottom:18px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:10px 16px;"><span style="font-size:12px;color:${SUBTLE};">تعرضين:</span>${crumbs.join(`<span style="color:${SUBTLE}">←</span>`)}<span class="hint" style="margin:0 8px 0 0;">التفصيل حسب الهيكل المرن — اضغطي على أي اسم</span></nav>`;
-  html += dashFiltersHtml(kind, series);
+  if (extra) html = ""; else html += dashFiltersHtml(kind, series);
 
   // بطاقات بخط تطور
   if (!dashHidden(kind, "exKpis")) { html += "\u0001exKpis\u0002";
@@ -3736,7 +3762,7 @@ function exBlocksInner(kind, units) {
       const nameEl = c.leaf || !c.levelId ? `<span style="width:150px;flex-shrink:0;font-size:12.5px;font-weight:700;">${esc(c.name)}</span>` : exDrillBtn(sc.path.concat(c.levelId), esc(c.name), `width:150px;flex-shrink:0;text-align:right;padding:4px 0;min-height:36px;font-size:12.5px;font-weight:700;color:${ROSE};`);
       return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;">${nameEl}<div style="flex:1;display:flex;flex-direction:column;gap:4px;">${bar(c.ind, ROSE)}${bar(c.goal, "#D9A066")}</div></div>`;
     }).join(""));
-  html += dashB(kind, "exCompare", cmp) + dashB(kind, "trend", dashTrendHtml(kind, series, "التطور فترة بعد فترة — " + (sc.cur ? sc.cur.name : "الجمعية")));
+  html += dashB(kind, "exCompare", cmp) + (extra ? "" : dashB(kind, "trend", dashTrendHtml(kind, series, "التطور فترة بعد فترة — " + (sc.cur ? sc.cur.name : "الجمعية"))));
   // أهداف الخطة الاستراتيجية + حالات المؤشرات
   const latestReports = dashReports(series, true);
   let strat = "";
@@ -3798,7 +3824,7 @@ function exBlocksInner(kind, units) {
     html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr));gap:14px;">${dashCard("أفضل 5 وحدات", "تحقق المؤشرات في آخر تقرير", list(ranked.slice(0, 5), GREEN))}${dashCard("أضعف 5 وحدات", "تحقق المؤشرات في آخر تقرير", list(ranked.slice().reverse().slice(0, 5), DANGER))}</div>`;
     html += "\u0003";
   }
-  html += dashB(kind, "followUp", dashFollowUpHtml(kind, series)) + dashB(kind, "highlights", dashHighlightsHtml(kind, series));
+  if (!extra) html += dashB(kind, "followUp", dashFollowUpHtml(kind, series)) + dashB(kind, "highlights", dashHighlightsHtml(kind, series));
   return html;
 }
 
@@ -3966,6 +3992,12 @@ function renderDashboard() {
       subtitle: `نظرة شاملة على ${units.length} وحدة تابعة لهذا المكتب`,
       topBarRight: pillBtn("خروج", { variant: "danger", icon: iconLogout(15, DANGER), action: "logout" }),
     });
+  }
+  if (S.levelScope && !S.isAdmin && !S.isDepartmentUser && !S.isOfficeUser) {
+    // حساب مستوى باسم دور «مساعدة مدير…» أو «سكرتارية»: لوحة ذلك الدور (بإعداداتها) لا لوحة وحدة
+    const rkl = dashRoleKind();
+    if (rkl === "role_asst") return renderExecutiveDashboard(undefined, undefined, { kind: "role_asst" });
+    if (rkl === "role_sec") return renderDashboardBody(S.units.filter((u) => u.status === "active" && u.role !== "self_report" && u.role !== "admin" && u.role !== "executive" && (!S.levelScope.unitIds || !S.levelScope.unitIds.has || S.levelScope.unitIds.has(u.id))), { kind: "role_sec" });
   }
   if (!S.isAdmin && !S.isExecutive && !S.isDepartmentUser && !S.isOfficeUser && !S.currentUnitId) ensureUnitContextForNav("unit-dashboard");
   if (!S.isAdmin && !S.isExecutive && !S.isDepartmentUser && !S.isOfficeUser && S.currentUnitId) {
@@ -4158,6 +4190,7 @@ function renderDashboardBody(activeUnits, opts) {
         <th style="color:${ROSE}">الوحدة</th><th style="color:${ROSE}">الهدف التشغيلي</th><th style="text-align:center;color:${ROSE}">المستوى</th><th style="text-align:center;color:${ROSE};width:70px">النسبة</th>
       </tr></thead><tbody>${goalsRows}</tbody></table></div>`}
     </div>`)}
+    ${dkind === "admin" ? "" : exExtraHtml(dkind, activeUnits)}
     ${dashPeriodBlocksHtml(dkind, series)}
     ${dashB(dkind, "programs", `<div style="margin-top:18px;">${programsCardHtml(activeUnits)}</div>`)}
     ${dashFieldBlocksHtml(dkind, activeUnits)}
@@ -4297,6 +4330,7 @@ function renderUnitDashboard() {
         <th style="color:${ROSE}">الهدف التشغيلي</th><th style="text-align:center;color:${ROSE}">المستوى</th><th style="text-align:center;color:${ROSE};width:70px">النسبة</th>
       </tr></thead><tbody>${goalsRows}</tbody></table></div>`}
     </div>`)}
+    ${unit ? exExtraHtml("unit", [unit]) : ""}
     ${unit ? dashPeriodBlocksHtml("unit", series) : ""}
     ${unit ? dashFieldBlocksHtml("unit", [unit]) : ""}
     ${unit ? dashB("unit", "achieve", achievementCardHtml([unit])) + dashB("unit", "yearCompare", yearCompareCardHtml([unit])) + dashB("unit", "programs", programsCardHtml([unit])) : ""}
@@ -5945,6 +5979,7 @@ function dashSettingsCardHtml() {
   return `<div class="card" style="margin-bottom:16px;">
     <div class="subhead" style="margin-top:0;">ما يظهر في لوحة المعلومات</div>
     <div class="hint" style="margin-bottom:14px;">✓ يظهر · ✗ مخفي. الاختيار لنوع الجهة كله (كل الأقسام ترى الشكل نفسه). يُحفظ فورًا. الأصل أن كل شيء ظاهر.</div>
+    ${(() => { const d = S.ui.dashSync; if (!d) return ""; const m = { ok: [GREEN, "✓ حُفظ في القاعدة وتأكدتُ بقراءته — ستظهر التغييرات في بقية الحسابات والأجهزة"], wait: [SUBTLE, "جارٍ الحفظ والتحقق…"], local: [GOLD, "⚠ حُفظ على هذا الجهاز فقط (الموقع غير مربوط بالقاعدة) — لن تظهر التغييرات في بقية الأجهزة"], bad: [DANGER, "✗ لم يُحفظ في القاعدة: " + (d.m || "") + " — لذلك لا تظهر التغييرات في الحسابات الأخرى"] }[d.s]; return `<div style="font-size:12.5px;font-weight:700;color:${m[0]};margin:-6px 0 12px;">${esc(m[1])}</div>`; })()}
     <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start;">
     ${group("لوحة مديرة النظام (متابعة التشغيل)", DASH_ADMIN_BLOCKS, ["admin"])}
     ${group("لوحة الوحدة والقسم والمكتب", DASH_STD_BLOCKS, DASH_STD_KINDS)}
@@ -8149,7 +8184,10 @@ function renderExecutiveDashboard(scopeUnits, scopeDepartments, opts) {
   // حساب مستوى من الهيكل المرن: لوحة بنفس شكل لوحة القسم، مقتصرة على ما تحته
   if (S.levelScope && !scopeUnits) {
     const lv = olFind(S.levelScope.levelId);
-    return renderDashboardBody(units, { kind: "dept", title: lv ? lv.name : "لوحة المعلومات", subtitle: `نظرة على ${units.length} وحدة تحت هذا المستوى` });
+    // حساب مستوى باسم دور «مساعدة مدير…» أو «سكرتارية»: يأخذ إعدادات لوحة ذلك الدور لا لوحة القسم
+    const rk = dashRoleKind();
+    if (rk === "role_asst") return renderExecutiveDashboard(units, S.departments.filter((d) => d.status === "active" && units.some((u) => u.departmentId === d.id)), { kind: "role_asst", subtitle: `نظرة على ${units.length} وحدة تحت هذا المستوى` });
+    return renderDashboardBody(units, { kind: rk === "role_sec" ? "role_sec" : "dept", title: lv ? lv.name : "لوحة المعلومات", subtitle: `نظرة على ${units.length} وحدة تحت هذا المستوى` });
   }
   const activeDepartments = scopeDepartments || scopeDeptsFilter(S.departments.filter((d) => d.status === "active"));
   const flat = scopeUnits ? collectReportsFlatForUnits(units) : collectAllReportsFlat();
