@@ -1721,6 +1721,7 @@ function apAdvanceOrReturn(unitId, reportId, isReturn, notes, opts) {
   if (!next) {
     log.push(apLogEntry("final", cur.key, "final", (cur.canApprove ? "اعتُمد نهائيًا من " : "أنهته ") + cur.name + (notes ? " — " + notes : "")));
     saveReportEntry(unitId, { ...entry, status: cur.canApprove ? "approved" : "completed", customStageId: null, customLog: log, updatedAt: Date.now() });
+    try { const ac = archiveCfg(themeOf(S.siteSettings || {})); if (ac.enabled && cur.canApprove && (ac.drive || ac.sheet)) setTimeout(() => { archiveRun(unitId, entry.id).catch(() => {}); }, 600); } catch (e) { /* فشل الأرشفة لا يمنع الاعتماد */ }
   } else {
     log.push(apLogEntry("send", cur.key, next.key, (cur.canApprove ? "اعتمدته " : "أرسلته ") + cur.name + " إلى " + next.name + (notes ? " — " + notes : "")));
     saveReportEntry(unitId, { ...entry, status: "custom_pending", customStageId: next.key, customLog: log, updatedAt: Date.now() });
@@ -2083,11 +2084,77 @@ function shellWrap(innerHtml) {
     <div class="app-shell">
       ${sidebarOpen ? renderMainSidebar(mobile) : ""}
       <div class="app-main">
-        ${!sidebarOpen ? `<div class="open-sidebar-wrap"><button class="mobile-menu-toggle" data-action="open-sidebar" title="فتح القائمة">${iconMenu(INK)}</button></div>` : ""}
+        ${!sidebarOpen ? `<div class="open-sidebar-wrap"><button class="mobile-menu-toggle" data-action="open-sidebar" title="فتح القائمة">${iconMenu(INK)}</button>${S.currentUser ? `<button class="sidebar-bell" title="الإشعارات" data-action="notif-toggle" style="margin:0 8px 0 0;">${iconBell(15, INK)}${computeNotificationCount() > 0 ? `<span class="notif-badge">${computeNotificationCount() > 9 ? "9+" : computeNotificationCount()}</span>` : ""}</button>` : ""}</div>` : ""}
         ${innerHtml}
       </div>
+      ${notifDropHtml()}
+      ${mobileTabBarHtml(mobile)}
     </div>
   `;
+}
+// ===== شريط سفلي للجوال: الرئيسية، تقارير، مسوداتي، إرسال، المزيد =====
+function mobileTabBarHtml(mobile) {
+  if (!mobile || !S.currentUser || window.innerWidth > 700) return "";
+  const ok = (v) => S.isAdmin || pageAllowedForView(v);
+  const home = ["unit-dashboard", "dashboard", "office-dashboard", "executive-dashboard"].find(ok);
+  const rep = ["unit-reports", "all-reports", "unit-all-reports"].find(ok);
+  const rf = ok("unit-all-reports") ? "unit-all-reports" : "";
+  const cur = S.view;
+  const it = (label, icon, attrs, on) => `<button type="button" class="mtb-i ${on ? "on" : ""}" ${attrs}>${icon}<span>${label}</span></button>`;
+  const ic = { home: iconHome ? iconHome(20, "currentColor") : "", doc: iconDocument(20, "currentColor"), menu: iconMenu("currentColor") };
+  const items = [];
+  if (home) items.push(it("الرئيسية", ic.home, `data-action="nav-to" data-view="${home}"`, cur === home));
+  if (rep) items.push(it("تقارير", ic.doc, `data-action="nav-to" data-view="${rep}"`, cur === rep));
+  if (rf) { items.push(it("مسوداتي", ic.doc, `data-action="mtb-filter" data-st="draft"`, cur === rf && S.ui.unitAllReportsStatusFilter === "draft"));
+    items.push(it("إرسال", ic.doc, `data-action="mtb-filter" data-st="custom_pending"`, cur === rf && S.ui.unitAllReportsStatusFilter === "custom_pending")); }
+  items.push(it("المزيد", ic.menu, `data-action="open-sidebar"`, false));
+  return `<nav class="mtb no-print" aria-label="التنقل">${items.join("")}</nav>`;
+}
+// ===== جرس التنبيهات: قائمة منسدلة بآخر التنبيهات (الجديد ملوّن) + «عرض كل التنبيهات» =====
+function notifRelAr(ts) {
+  if (!ts) return "";
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000)), n = (x) => Number(x).toLocaleString("ar-SA");
+  if (m < 1) return "الآن";
+  if (m < 60) return m === 1 ? "قبل دقيقة" : m === 2 ? "قبل دقيقتين" : m <= 10 ? "قبل " + n(m) + " دقائق" : "قبل " + n(m) + " دقيقة";
+  const h = Math.round(m / 60);
+  if (h < 24) return h === 1 ? "قبل ساعة" : h === 2 ? "قبل ساعتين" : h <= 10 ? "قبل " + n(h) + " ساعات" : "قبل " + n(h) + " ساعة";
+  const d = Math.round(h / 24);
+  return d === 1 ? "أمس" : d === 2 ? "قبل يومين" : d <= 10 ? "قبل " + n(d) + " أيام" : "قبل " + n(d) + " يومًا";
+}
+function notifSeenGet() { try { return Number(localStorage.getItem("prs:notif-seen")) || 0; } catch (e) { return 0; } }
+function notifSeenSet(v) { try { localStorage.setItem("prs:notif-seen", String(v)); } catch (e) {} }
+function notifFeed() {
+  const out = [];
+  const tm = (r) => r.internalReturnedAt || r.internalSentAt || r.updatedAt || r.createdAt || 0;
+  const lab = (r) => (r.label ? " «" + r.label + "»" : "");
+  const viaHub = inboxViaReportsHub();
+  try {
+    apPendingForMe().forEach((x) => out.push({ title: "وصل تقرير" + lab(x.report) + " إلى مرحلتك", sub: x.unit.name, at: tm(x.report), attrs: viaHub ? `data-action="goto-report-tab" data-filter="${MINE_TAB_ID}"` : `data-action="nav-to" data-view="custom-path-inbox"`, color: "#c9a14a" }));
+  } catch (e) {}
+  try {
+    if (S.currentUnitId && !S.isDepartmentUser && !S.isAdmin && !S.isExecutive) {
+      const unit = S.units.find((u) => u.id === S.currentUnitId);
+      const cfgC = effectiveReportTabsConfig();
+      const lst = ensureUnitReportsLoaded(S.currentUnitId);
+      const pick = cfgC && cfgC.notify.length ? lst.filter((r) => cfgC.notify.some((id) => reportMatchesCatalogTab(r, id))) : lst.filter((r) => r.status === "returned" || r.status === "needs_completion");
+      pick.forEach((r) => out.push({ title: (r.status === "needs_completion" ? "أُعيد للاستكمال تقرير" : r.status === "returned" ? "أُعيد للتعديل تقرير" : "تقرير") + lab(r), sub: unit ? unit.name : "", at: tm(r), attrs: `data-action="open-report" data-unit-id="${esc(S.currentUnitId)}" data-report-id="${esc(r.id)}"`, color: "#b04a63" }));
+    }
+  } catch (e) {}
+  return out.sort((a, b) => b.at - a.at);
+}
+function notifDropHtml() {
+  if (!S.currentUser || !S.ui || !S.ui.notifOpen || S.ui.notifOpenView !== S.view) return "";
+  const seen = S.ui.notifPrev || 0, all = notifFeed(), list = all.slice(0, 6);
+  const rows = list.length ? list.map((x) => { const fresh = x.at > seen; return `<button type="button" ${x.attrs} class="notif-row" style="display:flex;gap:10px;align-items:flex-start;width:100%;text-align:right;border:none;background:${fresh ? "#fbeff2" : "transparent"};border-radius:12px;padding:10px 12px;margin-bottom:4px;cursor:pointer;font-family:inherit;">
+      <span style="width:8px;height:8px;border-radius:50%;background:${x.color};margin-top:7px;flex:none;"></span>
+      <span style="flex:1;min-width:0;"><span style="display:block;font-size:13px;font-weight:800;color:${INK};line-height:1.6;">${esc(x.title)}</span><span style="display:block;font-size:11.5px;color:${SUBTLE};margin-top:2px;">${esc([x.sub, notifRelAr(x.at)].filter(Boolean).join(" · "))}</span></span></button>`; }).join("") : `<div style="text-align:center;color:${SUBTLE};font-size:13px;padding:22px 8px;">لا توجد تنبيهات حاليًا.</div>`;
+  const fresh = all.filter((x) => x.at > seen).length;
+  return `<div data-action="notif-close" style="position:fixed;inset:0;z-index:90;background:transparent;"></div>
+  <div class="notif-drop" role="dialog" aria-label="التنبيهات" style="position:fixed;top:64px;right:max(12px,env(safe-area-inset-right));z-index:91;width:min(380px,calc(100vw - 24px));max-height:70vh;overflow:auto;background:#fff;border:1px solid ${BORDER};border-radius:18px;box-shadow:0 12px 34px rgba(60,20,35,.22);padding:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px 10px;"><span style="font-size:14px;font-weight:800;color:${INK};">التنبيهات</span><span style="font-size:11.5px;color:${SUBTLE};">${fresh ? Number(fresh).toLocaleString("ar-SA") + " جديدة" : "لا جديد"}</span></div>
+    ${rows}
+    <div style="border-top:1px solid ${BORDER};margin-top:6px;padding-top:6px;"><button type="button" data-action="nav-to" data-view="unit-notifications" style="width:100%;border:none;background:transparent;color:${ROSE};font-weight:800;font-size:13px;padding:10px;cursor:pointer;font-family:inherit;">عرض كل التنبيهات</button></div>
+  </div>`;
 }
 
 const SIDEBAR_PAGES = [
@@ -2183,6 +2250,8 @@ function buttonAllowed(id) {
   if (!S.allowedButtons) return true;
   if (coreReportButtonOpen(id)) return true;
   if (id === "chip:" + MINE_TAB_ID && userInAnyApStage()) return true;
+  // صاحبة مرحلة في المسار: أزرار القرار (اعتماد/إرسال/إعادة) تظهر لها دائمًا — الرسم أصلًا لا يصلها إلا لو مرحلتها
+  if ((id === "ap-advance" || id === "ap-return") && userInAnyApStage()) return true;
   if (S.allowedButtons.includes(id)) return true;
   return (BUTTON_ALIASES[id] || []).some((a) => S.allowedButtons.includes(a));
 }
@@ -2374,7 +2443,7 @@ function renderMainSidebar(mobile) {
       <div class="sidebar-head-icons-row">
         <div class="icon-badge">${iconGauge(ROSE)}</div>
         <div style="display:flex;gap:6px;">
-          <button class="sidebar-bell" title="الإشعارات" data-action="nav-to" data-view="unit-notifications">${iconBell(15, INK)}${notifCount > 0 ? `<span class="notif-badge">${notifCount > 9 ? "9+" : notifCount}</span>` : ""}</button>
+          <button class="sidebar-bell" title="الإشعارات" data-action="notif-toggle">${iconBell(15, INK)}${notifCount > 0 ? `<span class="notif-badge">${notifCount > 9 ? "9+" : notifCount}</span>` : ""}</button>
           <button class="icon-btn" data-action="${mobile ? "close-mobile-sidebar" : "close-sidebar"}" title="إغلاق القائمة">${iconX(14, INK)}</button>
         </div>
       </div>
@@ -3215,6 +3284,12 @@ function dashRoleKind() {
   if (/مساعد/.test(n) && /(مدير|إدارة)/.test(n)) return "role_asst";
   return null;
 }
+// حساب مستوى هو «إدارة التعليم النسائي» نفسها (قمة الهيكل أو بالاسم): يأخذ إعدادات «لوحة إدارة التعليم النسائي»
+function dashLevelIsExec(lv) {
+  if (!lv) return false;
+  if (/^\s*إدارة\s+التعليم\s+النسائي\s*$/.test(String(lv.name || ""))) return true;
+  return !lv.parentId && /التعليم\s+النسائي/.test(String(lv.name || "")) && !/(مساعد|سكرتار)/.test(String(lv.name || ""));
+}
 // اللوحة العامة (مديرة النظام / المكتب / القسم / الوحدة)
 const DASH_STD_BLOCKS = [
   { key: "banner", label: "البانر والبحث" },
@@ -3260,6 +3335,8 @@ const DASH_ADMIN_BLOCKS = [
   { key: "opsHealth", label: "سلامة النظام" },
   { key: "opsSections", label: "أقسام التقرير (تشغيل وإطفاء)" },
   { key: "opsAggReports", label: "إدارة التقارير المجمّعة" },
+  { key: "opsRecent", label: "آخر التقارير (بحث وعرض وPDF)" },
+  { key: "opsRoles", label: "الأزرار والصفحات لكل دور (تشغيل وإطفاء)" },
   { key: "opsStuck", label: "تقارير واقفة في المسار" },
   { key: "opsMissing", label: "ما رفعت تقرير الفترة الحالية" },
   { key: "opsReturned", label: "تقارير معادة ما انعدّلت" },
@@ -3941,7 +4018,28 @@ function opsBlocksInner(kind, units) {
       (list.length ? list.map((c) => `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid ${BORDER};"><div style="flex:1;font-size:13px;font-weight:700;">${esc(c.name || "تقرير مجمّع")}</div></div>`).join("") : `<div class="hint">لا توجد تقارير مجمّعة بعد.</div>`)
       + `<div style="margin-top:10px;"><button type="button" class="pill-btn pill-ghost" data-action="nav-to" data-view="reports-manage">فتح تصميم وتنسيق التقارير</button></div>`);
   }
-  html += dashB(kind, "opsHealth", healthH) + dashB(kind, "opsSections", secH) + dashB(kind, "opsAggReports", aggH) + dashB(kind, "opsKpis", kpiH) + dashB(kind, "opsDeptCompliance", deptH) + dashB(kind, "opsStuck", stuckH) + dashB(kind, "opsMissing", missingH) + dashB(kind, "opsReturned", returnedH) + dashB(kind, "opsSetup", setupH) + dashB(kind, "opsActivity", actH);
+  let recH = "", rolesH = "";
+  if (!dashHidden(kind, "opsRecent")) {
+    const q = String((S.ui && S.ui.opsRecentQ) || "").trim().toLowerCase();
+    const all = flat.slice().sort((a, b) => (b.report.createdAt || b.report.updatedAt || 0) - (a.report.createdAt || a.report.updatedAt || 0));
+    const shown = all.filter((x) => !q || String(x.unit.name || "").toLowerCase().includes(q) || String(x.report.label || "").toLowerCase().includes(q)).slice(0, 10);
+    recH = dashCard("آخر التقارير", "ابحثي بالوحدة أو بعنوان التقرير", `<input type="text" id="ops-recent-q" class="input" placeholder="بحث بالوحدة…" value="${esc((S.ui && S.ui.opsRecentQ) || "")}" style="margin-bottom:8px;" />`
+      + (shown.length ? shown.map((x) => { const m = reportStatusMeta(x.report.status); return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 0;border-top:1px solid ${BORDER};"><div style="flex:1 1 160px;min-width:0;"><div style="font-size:13px;font-weight:800;">${esc(x.unit.name)}</div><div style="font-size:11.5px;color:${SUBTLE};">${esc(x.report.label || "تقرير")}</div></div>${badgeHtml(m.label, m.color, m.bg)}<button type="button" class="pill-btn pill-ghost" style="padding:5px 10px;" data-action="view-report-pdf" data-unit-id="${esc(x.unit.id)}" data-report-id="${esc(x.report.id)}">عرض</button></div>`; }).join("") : `<div class="hint">لا توجد نتائج.</div>`)
+      + `<div style="margin-top:10px;"><button type="button" class="pill-btn pill-ghost" data-action="nav-to" data-view="all-reports">فتح جميع التقارير</button></div>`);
+  }
+  if (!dashHidden(kind, "opsRoles")) {
+    const cat = BUTTON_CATALOG.filter((b) => !CORE_REPORT_BUTTONS.includes(b.id) && !["ap-advance", "ap-return"].includes(b.id) && b.id.indexOf("chip:") !== 0);
+    const sw = (on, role, kd, id) => `<button type="button" class="sw-tg ${on ? "on" : ""}" data-action="ops-perm-toggle" data-role-id="${esc(role.id)}" data-kind="${kd}" data-id="${esc(id)}" aria-pressed="${on}" style="flex:none;"><i></i></button>`;
+    rolesH = dashCard("الأزرار والصفحات", "اضغطي المفتاح لتشغيل أو إطفاء الصفحة أو الزر للدور · الإطفاء يطلب تأكيدًا",
+      rolesList().map((r) => { const p = rolePermsOf(r); const pgs = SIDEBAR_PAGES.filter((pg) => pg && pg.id);
+        return `<details style="border-top:1px solid ${BORDER};padding:8px 0;"><summary style="cursor:pointer;font-size:13px;font-weight:800;min-height:36px;display:flex;align-items:center;gap:8px;">${esc(r.name)} <span style="font-size:11.5px;color:${SUBTLE};font-weight:600;">${p.pages.length} صفحة · ${p.buttons.filter((b) => b.indexOf("notify:") !== 0).length} زر</span></summary>
+          <div style="font-size:11.5px;font-weight:800;color:${ROSE};margin:8px 0 4px;">الصفحات</div>
+          ${pgs.map((pg) => `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;"><span style="flex:1;font-size:12.5px;">${esc(pg.label || pg.id)}</span>${sw(p.pages.includes(pg.id), r, "page", pg.id)}</div>`).join("")}
+          <div style="font-size:11.5px;font-weight:800;color:${ROSE};margin:8px 0 4px;">الأزرار</div>
+          ${cat.map((b) => `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;"><span style="flex:1;font-size:12.5px;">${esc(b.label)}</span>${sw(p.buttons.includes(b.id), r, "button", b.id)}</div>`).join("")}
+        </details>`; }).join("") || `<div class="hint">لا توجد أدوار.</div>`);
+  }
+  html += dashB(kind, "opsHealth", healthH) + dashB(kind, "opsSections", secH) + dashB(kind, "opsAggReports", aggH) + dashB(kind, "opsRecent", recH) + dashB(kind, "opsRoles", rolesH) + dashB(kind, "opsKpis", kpiH) + dashB(kind, "opsDeptCompliance", deptH) + dashB(kind, "opsStuck", stuckH) + dashB(kind, "opsMissing", missingH) + dashB(kind, "opsReturned", returnedH) + dashB(kind, "opsSetup", setupH) + dashB(kind, "opsActivity", actH);
   return html;
 }
 
@@ -3996,6 +4094,7 @@ function renderDashboard() {
   if (S.levelScope && !S.isAdmin && !S.isDepartmentUser && !S.isOfficeUser) {
     // حساب مستوى باسم دور «مساعدة مدير…» أو «سكرتارية»: لوحة ذلك الدور (بإعداداتها) لا لوحة وحدة
     const rkl = dashRoleKind();
+    if (!rkl && dashLevelIsExec(olFind(S.levelScope.levelId))) return renderExecutiveDashboard(undefined, undefined, { kind: "executive" });
     if (rkl === "role_asst") return renderExecutiveDashboard(undefined, undefined, { kind: "role_asst" });
     if (rkl === "role_sec") return renderDashboardBody(S.units.filter((u) => u.status === "active" && u.role !== "self_report" && u.role !== "admin" && u.role !== "executive" && (!S.levelScope.unitIds || !S.levelScope.unitIds.has || S.levelScope.unitIds.has(u.id))), { kind: "role_sec" });
   }
@@ -4348,7 +4447,7 @@ function usLevelUnitSwitcherHtml() {
 }
 function renderUnitSettings() {
   const unit = (S.units || []).find((u) => u.id === S.currentUnitId);
-  const body = !unit ? `<div class="card" style="text-align:center;color:${SUBTLE};padding:36px;">اختاري الوحدة أولًا.</div>` : (() => { const t = S.ui.usTab || "sections"; return `<div class="st-tabs" style="margin-bottom:14px;">${[["sections", "الأقسام"], ["path", "المسار"], ["format", "التنسيق"]].map(([id, l]) => `<button type="button" class="st-tab${t === id ? " on" : ""}" data-action="us-tab" data-tab="${id}">${l}</button>`).join("")}</div>${t === "path" ? usSkipCardHtml(unit) : t === "format" ? usLetterheadCardHtml(unit) : usSectionsCardHtml(unit)}`; })();
+  const body = !unit ? `<div class="card" style="text-align:center;color:${SUBTLE};padding:36px;">اختاري الوحدة أولًا.</div>` : (() => { const t = S.ui.usTab || "sections"; return `<div class="st-tabs" style="margin-bottom:14px;">${[["sections", "الأقسام"], ["path", "المسار"], ["format", "التنسيق"], ["archive", "الأرشفة"]].map(([id, l]) => `<button type="button" class="st-tab${t === id ? " on" : ""}" data-action="us-tab" data-tab="${id}">${l}</button>`).join("")}</div>${t === "path" ? usSkipCardHtml(unit) : t === "format" ? usLetterheadCardHtml(unit) : t === "archive" ? usArchiveCardHtml(unit) : usSectionsCardHtml(unit)}`; })();
   return `
   <div class="page-wrap"><div class="page-inner narrow">
     ${topBarHtml({ title: "الإعدادات", subtitle: unit ? unit.name : "" })}
@@ -4380,6 +4479,35 @@ function usLetterheadCardHtml(unit) {
       <div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">صورة خلفية الصفحات</div>${pgImgRow("us-img-bg", cur.bg, "us-img-clear", "bg")}</div>
       <div><div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">خلفية الصفحة الأولى (الغلاف) — اختيارية</div>${pgImgRow("us-img-cover", cur.coverBg, "us-img-clear", "coverBg")}</div>
     </div>
+  </div>`;
+}
+// ===== تبويب «الأرشفة» في إعدادات الوحدة: مفتاح الإرسال إلى Drive + مجلد الوحدة (اختياري) =====
+function usArchiveGet(uid) { const all = ((((S.siteSettings || {}).theme || {}).unitArchive) || {}); return all[uid] || {}; }
+function usArchiveSet(uid, patch) {
+  saveSiteTheme((th) => { const all = { ...((th || {}).unitArchive || {}) }; all[uid] = { ...(all[uid] || {}), ...patch }; return { unitArchive: all }; });
+}
+function usArchiveCardHtml(unit) {
+  const cur = usArchiveGet(unit.id), central = archiveCfg((S.siteSettings || {}).theme);
+  const folder = S.ui.usArFolder != null ? S.ui.usArFolder : (cur.folder || "");
+  const bad = folder && !/^https:\/\/[^\s]+$/.test(folder);
+  const on = !!cur.on;
+  const stat = !central.enabled ? ["الأرشفة التلقائية متوقفة من إعدادات الموقع", SUBTLE, GRAY_BG] : on ? ["مفعّل لهذي الوحدة — يبدأ الإرسال مع الاعتماد النهائي", GREEN, GREEN_BG] : ["متوقف لهذي الوحدة", SUBTLE, GRAY_BG];
+  return `<div class="card" style="margin-bottom:14px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div><div style="font-size:14px;font-weight:800;">إرسال التقارير المعتمدة إلى Drive</div><div class="hint" style="margin-top:2px;">عند الاعتماد النهائي</div></div>
+      <button type="button" data-action="us-ar-toggle" aria-pressed="${on ? "true" : "false"}" aria-label="تشغيل أو إيقاف الإرسال إلى Drive" style="border:none;background:none;cursor:pointer;padding:6px;"><span class="sw-tg${on ? " on" : ""}"><i></i></span></button>
+    </div>
+    <div style="border-top:1px solid ${BORDER};margin:14px 0;"></div>
+    <div style="font-size:13.5px;font-weight:800;">مجلد الوحدة في Drive (اختياري)</div>
+    <div class="hint" style="margin:2px 0 8px;">شاركيه كـ«محرر» مع حساب الإرسال${central.senderEmail ? ": " + esc(central.senderEmail) : ""}.</div>
+    <input type="text" class="input" id="us-ar-folder" dir="ltr" value="${esc(folder)}" placeholder="https://drive.google.com/drive/folders/…" style="width:100%;" />
+    ${bad ? `<div class="hint" style="color:${DANGER};margin-top:4px;">الرابط لازم يبدأ بـ https://</div>` : ""}
+    <div style="border-top:1px solid ${BORDER};margin:14px 0;"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <span style="font-size:13.5px;font-weight:800;">حالة الإرسال</span>
+      <span style="padding:8px 16px;border-radius:999px;background:${stat[2]};color:${stat[1]};font-size:12.5px;font-weight:800;">${esc(stat[0])}</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;justify-content:flex-end;">${pillBtn("تجربة الرابط", { variant: "ghost", action: "us-ar-test" })}${pillBtn("حفظ الرابط", { variant: "soft", action: "us-ar-save" })}</div>
   </div>`;
 }
 function ulSetImage(uid, key, url) {
@@ -4417,7 +4545,7 @@ function usSkipCardHtml(unit) {
   })).join("");
   return `<div class="card" style="margin-bottom:14px;">
     <div style="font-size:14px;font-weight:800;margin-bottom:4px;">مسار تقارير الوحدة</div>
-    <div class="hint" style="margin-bottom:10px;">يطلع لحاله من الهيكل. اختاري الفترة، وعلى كل مرحلة اضغطي «ما يمر عليها» لو ما تبين التقرير يمر عليها في هذه الفترة (مثلًا «شهري» يروح مباشرة للإدارة العليا). «كل الفترات» يسري على كل التقارير. المراحل اللي ما تقبل التخطّي ما يطلع عليها زر.</div>
+    <div class="hint" style="margin-bottom:10px;">يطلع لحاله من الهيكل. اختاري الفترة، وعلى كل مرحلة شغّلي المفتاح (يمر عليها) أو أطفئيه (ما يمر عليها) لهذه الفترة (مثلًا «شهري» يروح مباشرة للإدارة العليا). «كل الفترات» يسري على كل التقارير. المراحل اللي ما تقبل التخطّي ما يطلع عليها زر.</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">${pills}</div>
     ${cur ? `<div style="font-size:12px;color:${SUBTLE};margin-bottom:8px;">المسار لتقارير «${esc(cur)}»</div>` : ""}
     ${apAutoPathListHtml(unit, true, cur, true)}
@@ -5919,7 +6047,7 @@ function archiveCardHtml(theme) {
   const bad = (v) => v && !/^https:\/\/[^\s]+$/.test(v);
   return `<div class="card" style="margin-bottom:16px;max-width:760px;">
     <div class="subhead" style="margin-top:0;">الأرشفة وDrive</div>
-    <div class="hint" style="margin-bottom:14px;">هنا تُضبط الروابط ومفاتيح التشغيل. القاعدة تحفظ دائمًا؛ وDrive والشيت اختياريان، وفشلهما لا يمنع الاعتماد. يبدأ التنفيذ الفعلي للحفظ في Drive بعد ما نكمل دفعة Drive.</div>
+    <div class="hint" style="margin-bottom:14px;">هنا تُضبط الروابط ومفاتيح التشغيل. القاعدة تحفظ دائمًا؛ وDrive والشيت اختياريان، وفشلهما لا يمنع الاعتماد. تعمل مع زر «حفظ وإرسال» داخل «عرض التقرير»، وتلقائيًا عند الاعتماد النهائي إذا فعّلتِ الأرشفة التلقائية.</div>
     ${fld("الأرشفة التلقائية عند الاعتماد النهائي", `<div style="display:flex;gap:8px;flex-wrap:wrap;">${tog("enabled", a.enabled ? "مفعّلة" : "متوقفة")}</div>`)}
     ${fld("أماكن الحفظ", `<div style="display:flex;gap:8px;flex-wrap:wrap;"><span style="min-height:40px;display:inline-flex;align-items:center;padding:0 16px;border-radius:999px;border:1px solid ${GREEN};background:${GREEN_BG};color:${GREEN};font-size:13px;font-weight:700;">✓ القاعدة (دائمًا)</span>${tog("drive", "Google Drive")}${tog("sheet", "Google Sheet")}</div>`)}
     ${a.drive ? `${fld("رابط سكربت Drive الوسيط (Apps Script)", inp("scriptUrl", "https://script.google.com/macros/s/…/exec", "ltr"), bad(a.scriptUrl) ? `<span style="color:${DANGER};">الرابط لازم يبدأ بـ https://</span>` : "الموقع الحقيقي والتجريبي يحتاجان سكربتًا وسيطًا يُنشر مرة واحدة.")}
@@ -5961,6 +6089,37 @@ function dashPreviewHtml(kind) {
   S.currentUnitId = keep.cu;
   return h;
 }
+const DASH_GROUPS = [
+  ["البانر والفلاتر", ["banner", "periodFilter"]],
+  ["الأرقام والبطاقات", ["stats", "exKpis", "opsCounts", "opsKpis", "achieve", "yearCompare", "recent"]],
+  ["الرسوم والخرائط", ["totalPie", "bars", "indPie", "goalPie", "trend", "exHeat", "exHeatGoal", "exCompare", "unitsCmp", "exStacks", "exTopBottom", "opsDeptCompliance"]],
+  ["الجداول والإدارة", ["indicators", "goals", "indMatrix", "goalMatrix", "programs", "sharedInd", "opsSections", "opsAggReports", "opsRecent", "opsRoles"]],
+  ["حقول أقسام التقرير", ["fld_*"]],
+  ["التحليل والمتابعة", ["*"]],
+];
+function dashGroupOf(key) {
+  for (const [name, keys] of DASH_GROUPS) { if (keys.indexOf(key) !== -1 || (keys[0] === "fld_*" && key.indexOf("fld_") === 0)) return name; }
+  return "التحليل والمتابعة";
+}
+function dashKindPanelHtml() {
+  const kid = (DASH_KINDS.some((k) => k.id === S.ui.dashKindTab) ? S.ui.dashKindTab : "unit");
+  const tabs = DASH_KINDS.map((k) => `<button type="button" data-action="dash-kind-tab" data-kind="${esc(k.id)}" style="font-family:inherit;min-height:40px;padding:0 14px;border-radius:12px;border:1px solid ${k.id === kid ? ROSE : BORDER};background:${k.id === kid ? ROSE : "#fff"};color:${k.id === kid ? "#fff" : INK};font-size:13px;font-weight:800;cursor:pointer;">${esc(k.label)}</button>`).join("");
+  const items = dashCatalog(kid).filter((b) => !(b.not && b.not.indexOf(kid) !== -1));
+  const groups = DASH_GROUPS.map(([name]) => [name, items.filter((b) => dashGroupOf(b.key) === name)]).filter(([, l]) => l.length);
+  const sw = (on, key) => `<button type="button" class="sw-tg ${on ? "on" : ""}" data-action="dash-toggle" data-kind="${esc(kid)}" data-key="${esc(key)}" aria-pressed="${on}" title="${on ? "ظاهر — اضغطي للإخفاء" : "مخفي — اضغطي للإظهار"}" style="flex:none;"><i></i></button>`;
+  const body = groups.map(([name, list]) => {
+    const shown = list.filter((b) => !dashHidden(kid, b.key)).length;
+    const keys = list.map((b) => b.key).join(",");
+    return `<details open style="border:1px solid ${BORDER};border-radius:14px;overflow:hidden;background:#fff;margin-bottom:12px;">
+      <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:12px 14px;background:#faf4f6;font-weight:800;color:${ROSE};font-size:14px;list-style:none;"><span style="flex:1;">${esc(name)}</span><span class="badge" style="background:${GRAY_BG};color:${ROSE};">${shown} من ${list.length} ظاهرة</span>
+        <button type="button" class="pill-btn pill-ghost" style="padding:4px 10px;" data-action="dash-group" data-kind="${esc(kid)}" data-keys="${esc(keys)}" data-show="1">إظهار الكل</button>
+        <button type="button" class="pill-btn pill-ghost" style="padding:4px 10px;" data-action="dash-group" data-kind="${esc(kid)}" data-keys="${esc(keys)}" data-show="0">إخفاء الكل</button></summary>
+      ${list.map((b) => `<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-top:1px solid ${BORDER};font-size:13.5px;"><span style="flex:1;">${esc(b.label)}</span>${sw(!dashHidden(kid, b.key), b.key)}</div>`).join("")}
+    </details>`;
+  }).join("");
+  return `<div style="width:100%;margin-bottom:10px;"><div style="font-size:13px;font-weight:800;margin-bottom:8px;">اختاري نوع الحساب</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">${tabs}</div>${body}</div>`;
+}
 function dashSettingsCardHtml() {
   const group = (title, blocks, kindIds) => {
     const kinds = DASH_KINDS.filter((k) => kindIds.indexOf(k.id) !== -1);
@@ -5978,18 +6137,13 @@ function dashSettingsCardHtml() {
   const anyHidden = DASH_KINDS.some((k) => (dashConfig()[k.id] && (dashConfig()[k.id].hidden || []).length));
   return `<div class="card" style="margin-bottom:16px;">
     <div class="subhead" style="margin-top:0;">ما يظهر في لوحة المعلومات</div>
-    <div class="hint" style="margin-bottom:14px;">✓ يظهر · ✗ مخفي. الاختيار لنوع الجهة كله (كل الأقسام ترى الشكل نفسه). يُحفظ فورًا. الأصل أن كل شيء ظاهر.</div>
+    <div class="hint" style="margin-bottom:14px;">اختاري نوع الحساب ثم شغّلي أو أطفئي ما يظهر له. الاختيار لنوع الجهة كله (كل الأقسام ترى الشكل نفسه). يُحفظ فورًا. الأصل أن كل شيء ظاهر.</div>
     ${(() => { const d = S.ui.dashSync; if (!d) return ""; const m = { ok: [GREEN, "✓ حُفظ في القاعدة وتأكدتُ بقراءته — ستظهر التغييرات في بقية الحسابات والأجهزة"], wait: [SUBTLE, "جارٍ الحفظ والتحقق…"], local: [GOLD, "⚠ حُفظ على هذا الجهاز فقط (الموقع غير مربوط بالقاعدة) — لن تظهر التغييرات في بقية الأجهزة"], bad: [DANGER, "✗ لم يُحفظ في القاعدة: " + (d.m || "") + " — لذلك لا تظهر التغييرات في الحسابات الأخرى"] }[d.s]; return `<div style="font-size:12.5px;font-weight:700;color:${m[0]};margin:-6px 0 12px;">${esc(m[1])}</div>`; })()}
     <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start;">
-    ${group("لوحة مديرة النظام (متابعة التشغيل)", DASH_ADMIN_BLOCKS, ["admin"])}
-    ${group("لوحة الوحدة والقسم والمكتب", DASH_STD_BLOCKS, DASH_STD_KINDS)}
-    ${group("لوحة إدارة التعليم النسائي", DASH_EX_BLOCKS, DASH_EX_KINDS)}
     <div style="margin-bottom:18px;"><div style="font-size:13px;font-weight:800;margin-bottom:8px;">ربط لوحتي السكرتارية والمساعدة بدورهما</div>
       <div class="hint" style="margin-bottom:8px;">اختاري الدور الذي تنطبق عليه كل لوحة (بدل الاعتماد على كلمة في اسم الدور). «تلقائي» = من الاسم.</div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;">${[["role_sec", "دور السكرتارية"], ["role_asst", "دور مساعدة مدير إدارة التعليم النسائي"]].map(([k, l]) => `<div style="flex:1 1 260px;"><div style="font-size:12px;color:${SUBTLE};margin-bottom:4px;">${l}</div><select class="input" id="dash-rolemap-${k}" style="width:100%;"><option value="">تلقائي (من الاسم)</option>${rolesList().filter((r) => r.status !== "disabled").map((r) => `<option value="${esc(r.id)}" ${((dashConfig()._roles || {})[k]) === r.id ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></div>`).join("")}</div></div>
-    ${group("حقول أقسام التقرير (كل قسم له بطاقة — أخفي ما لا تحتاجينه)", dashFieldCatalog(), DASH_KINDS.map((k) => k.id))}
-    ${group("لوحة السكرتارية", DASH_STD_BLOCKS, ["role_sec"])}
-    ${group("لوحة مساعدة مدير إدارة التعليم النسائي", DASH_EX_BLOCKS, ["role_asst"])}
+    ${dashKindPanelHtml()}
     </div>
     <div>${pillBtn("إظهار كل العناصر للجميع", { variant: "ghost", icon: iconX(14, INK), action: "dash-reset", disabled: !anyHidden })}</div>
     <div style="border-top:1px solid ${BORDER};margin-top:18px;padding-top:16px;">
@@ -8186,6 +8340,7 @@ function renderExecutiveDashboard(scopeUnits, scopeDepartments, opts) {
     const lv = olFind(S.levelScope.levelId);
     // حساب مستوى باسم دور «مساعدة مدير…» أو «سكرتارية»: يأخذ إعدادات لوحة ذلك الدور لا لوحة القسم
     const rk = dashRoleKind();
+    if (!rk && dashLevelIsExec(lv)) return renderExecutiveDashboard(units, S.departments.filter((d) => d.status === "active" && units.some((u) => u.departmentId === d.id)), { kind: "executive", subtitle: `نظرة على ${units.length} وحدة تحت هذا المستوى` });
     if (rk === "role_asst") return renderExecutiveDashboard(units, S.departments.filter((d) => d.status === "active" && units.some((u) => u.departmentId === d.id)), { kind: "role_asst", subtitle: `نظرة على ${units.length} وحدة تحت هذا المستوى` });
     return renderDashboardBody(units, { kind: rk === "role_sec" ? "role_sec" : "dept", title: lv ? lv.name : "لوحة المعلومات", subtitle: `نظرة على ${units.length} وحدة تحت هذا المستوى` });
   }
@@ -8625,7 +8780,7 @@ function renderUnitReportsHub() {
       // تُمنح له ضمن قائمة الصفحات — فتظل الصفحة تَعِد بالزر "من الشريط
       // الجانبي" بينما هو غير موجود أصلًا.
       right: (actionAllowed("open-or-create-report") && !adminReportsReadOnly() && !computeVisibleSidebarPages().some((p) => p.id === "unit-report") ? pillBtn("إنشاء تقرير", { icon: iconPencil(14, "#fff"), action: "open-or-create-report" }) : "")
-        + (actionAllowed("create-new-report") && !adminReportsReadOnly() ? pillBtn("تقرير جديد", { variant: "ghost", icon: iconPlus(14, INK), action: "create-new-report" }) : "") })}
+})}
     ${scopedUnitSwitcherHtml()}
 
     <div class="hero-banner">
@@ -8716,11 +8871,17 @@ function apAutoPathListHtml(unit, withSkip, period, unitCtl) {
     const mine = !inBase && withSkip && (unitCtl || (pm && pm.skip)) && r.state !== "all" && r.state !== "auto" && (unitCtl || holds);
     const pd = period ? { pt: period } : {};
     const many = mine && lvl && holds ? (S.units || []).filter((u) => u.status === "active" && olScopeUnitIds(lvl.id).has(u.id)).length : 0;
-    return `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 10px;border-radius:12px;border:1px ${off ? "dashed #d9c9cf" : "solid " + BORDER};background:${off ? "#faf6f7" : "#fff"};">
-      <span style="width:24px;height:24px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:800;background:${off ? "#f1ecee" : "#f3e6ea"};color:${off ? "#a99" : ROSE};">${off ? "–" : info ? "ⓘ" : n}</span>
-      <div style="flex:1 1 180px;min-width:0;"><div style="font-size:12.5px;font-weight:800;${off ? "color:#a3949a;text-decoration:line-through;" : ""}">${esc(r.name)}</div>${r.why ? `<div style="font-size:11px;color:${SUBTLE};">${esc(r.why)}</div>` : ""}</div>
-      ${mine ? `<div style="display:flex;gap:6px;flex-wrap:wrap;">${pillBtn(r.state === "unit" ? (unitCtl ? "يمر عليها" : "إرجاع مرحلتي") : (unitCtl ? "ما يمر عليها" : period ? "تخطّي مرحلتي في «" + period + "»" : "تخطّي مرحلتي لهذه الوحدة"), { variant: r.state === "unit" ? "ghost" : "primary", action: "us-skip-toggle", data: { key, on: r.state === "unit" ? "0" : "1", ...pd } })}
-        ${many > 1 ? pillBtn((r.state === "unit" ? "إرجاعها" : "تخطّيها") + " لكل وحداتي (" + many + ")", { variant: "soft", action: "us-skip-toggle", data: { key, on: r.state === "unit" ? "0" : "1", all: lvl.id, ...pd } }) : ""}</div>` : ""}
+    // مفتاح تشغيل لكل مرحلة (كالتصميم): مفتوح = يمر عليها التقرير في هذه الفترة، مطفأ = ما يمر عليها
+    const ctl = withSkip && r.state !== "all" && r.state !== "auto" && (unitCtl || (pm && pm.skip && holds));
+    const passes = r.state === "on" || info;
+    const subTxt = r.why || (pm && pm.final ? "تعتمد" : pm && pm.info ? "للعلم فقط" : "تراجع وتمرر");
+    const sw = ctl ? `<button type="button" data-action="us-skip-toggle" data-key="${esc(key)}" data-on="${passes ? "1" : "0"}" ${period ? `data-pt="${esc(period)}"` : ""} aria-pressed="${passes ? "true" : "false"}" aria-label="${passes ? "يمر عليها — اضغطي لإيقافه" : "ما يمر عليها — اضغطي لتشغيله"}" style="border:none;background:none;cursor:pointer;padding:8px;min-width:48px;min-height:44px;"><span class="sw-tg${passes ? " on" : ""}"><i></i></span></button>` : `<span style="min-width:48px;"></span>`;
+    const numEl = `<span style="width:34px;height:34px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:800;background:${off && !inBase ? "#f1ecee" : "#f3e6ea"};color:${off && !inBase ? "#a99" : ROSE};">${r.state === "auto" || r.state === "all" ? "–" : info ? "ⓘ" : n}</span>`;
+    return `<div style="display:flex;gap:12px;align-items:center;padding:12px 4px;border-bottom:1px solid ${BORDER};">
+      ${numEl}
+      <div style="flex:1 1 auto;min-width:0;"><div style="font-size:14px;font-weight:800;${(r.state === "auto" || r.state === "all") ? "color:#a3949a;text-decoration:line-through;" : ""}">${esc(r.name)}</div><div style="font-size:12px;color:${SUBTLE};margin-top:2px;">${esc(subTxt)}</div>
+        ${many > 1 ? `<div style="margin-top:6px;">${pillBtn((passes ? "تخطّيها" : "إرجاعها") + " لكل وحداتي (" + many + ")", { variant: "soft", action: "us-skip-toggle", data: { key, on: passes ? "1" : "0", all: lvl.id, ...pd } })}</div>` : ""}</div>
+      ${sw}
     </div>`;
   }).join("");
   return `<div style="display:flex;gap:10px;align-items:center;padding:8px 10px;border-radius:12px;background:${ROSE};color:#fff;margin-bottom:6px;font-size:12.5px;"><span>✎</span><span>يكتب: <b>${esc(pv.writer)}</b></span></div>
@@ -8950,11 +9111,12 @@ function permDropdownTargetArray(key) {
 
 function permButtonsChecklistHtml(allSelected, action) {
   const selectedAll = allSelected || [];
-  const selected = selectedAll.filter((x) => String(x).indexOf("notify:") !== 0);
+  const AUTO_BTNS = ["ap-advance", "ap-return"]; // تظهر تلقائيًا لصاحبة المرحلة في المسار — لا تحتاج اختيارًا
+  const selected = selectedAll.filter((x) => String(x).indexOf("notify:") !== 0 && !AUTO_BTNS.includes(x));
   const groups = [];
-  const shownCatalog = BUTTON_CATALOG.filter((b) => !CORE_REPORT_BUTTONS.includes(b.id));
+  const shownCatalog = BUTTON_CATALOG.filter((b) => !CORE_REPORT_BUTTONS.includes(b.id) && !AUTO_BTNS.includes(b.id));
   shownCatalog.forEach((b) => { let g = groups.find((x) => x.name === b.g); if (!g) { g = { name: b.g, items: [] }; groups.push(g); } g.items.push(b); });
-  return permDropdownChecklistHtml({
+  return `<div class="hint" style="margin-bottom:6px;">أزرار «اعتماد/إرسال» و«إعادة للتعديل» تظهر تلقائيًا لمن عندها مرحلة في مسار الاعتماد، وأزرار بطاقة التقرير الأساسية تتبع صفحة التقرير — فلا تحتاج اختيارًا هنا.</div>` + permDropdownChecklistHtml({
     action, selected, total: shownCatalog.length, emptyLabel: "الأزرار",
     renderList: () => groups.map((g) => `<div style="margin-bottom:8px;"><div style="font-size:10.5px;font-weight:800;color:${ROSE};margin-bottom:4px;">${esc(g.name)}</div>${g.items.map((b) => permCheckboxRowHtml(action, b.id, b.label, selected.includes(b.id)) + (b.id.indexOf("chip:") === 0 ? `<div style="padding-inline-start:22px;">${permCheckboxRowHtml(action, "notify:" + b.id, "↳ ينبّه بعدد تقارير هذا الزر (في التنبيهات)", selectedAll.includes("notify:" + b.id))}</div>` : "")).join("")}</div>`).join(""),
   });
@@ -9099,8 +9261,8 @@ function apAutoPreview(unit, period) {
     if (st.disabled) { r.state = "all"; r.why = "متخطّاة لكل الوحدات"; }
     else if (!h.length) { r.state = "auto"; r.why = "تُتخطّى تلقائيًا — ما فيه أحد"; }
     else if (st.unitRank <= writerRank) { r.state = "auto"; r.why = st.unitRank === writerRank ? "تُتخطّى — هي اللي تكتب التقرير" : "تُتخطّى — أقل من اللي تكتب"; }
-    else if (wr.includes(st.unitRank)) { r.state = "on"; r.why = "لو هي اللي كتبت التقرير ما يمر عليها"; r.whyOk = true; }
     else if (uSkip.includes(AUTO_PATH_ID + ":" + st.id)) { r.state = "unit"; r.why = "متخطّاة لهذه الوحدة"; }
+    else if (wr.includes(st.unitRank)) { r.state = "on"; r.why = "لو هي اللي كتبت التقرير ما يمر عليها"; r.whyOk = true; }
     else if (!r.state) r.state = "on";
     rows.push(r);
   });
@@ -9920,11 +10082,11 @@ function fieldSchemaRowHtml(field, index, total, sectionId) {
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;">
           <span style="font-size:10.5px;font-weight:700;color:${INK};background:${GRAY_BG};padding:2px 9px;border-radius:999px;">${esc(typeLabel)}</span>
           <span style="font-size:10.5px;font-weight:700;color:${isComputed ? BLUE : GREEN};background:${isComputed ? BLUE_BG : GREEN_BG};padding:2px 9px;border-radius:999px;">${isComputed ? "محسوبة تلقائيًا" : "إدخال يدوي"}</span>
-          ${field.required ? `<span style="font-size:10.5px;font-weight:700;color:${DANGER};background:${DANGER_BG};padding:2px 9px;border-radius:999px;">إلزامي</span>` : ""}
         </div>
       </div>
     </div>
-    <div style="display:flex;gap:5px;flex-shrink:0;align-items:center;">
+    <div style="display:flex;gap:8px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+      ${isComputed ? "" : `<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:${SUBTLE};">إلزامي <button type="button" class="sw-tg ${field.required ? "on" : ""}" data-action="toggle-schema-required" data-section="${esc(sectionId)}" data-id="${esc(field.id)}" aria-pressed="${!!field.required}"><i></i></button></label>`}
       <span style="display:inline-flex;flex-direction:column;gap:2px;">
         <button class="icon-btn" style="width:22px;height:15px;border:1px solid ${BORDER}" data-action="move-schema-field" data-section="${esc(sectionId)}" data-id="${esc(field.id)}" data-dir="up" ${index === 0 ? "disabled" : ""} title="نقل لأعلى">${iconChevronUp(10, INK)}</button>
         <button class="icon-btn" style="width:22px;height:15px;border:1px solid ${BORDER}" data-action="move-schema-field" data-section="${esc(sectionId)}" data-id="${esc(field.id)}" data-dir="down" ${index === total - 1 ? "disabled" : ""} title="نقل لأسفل">${iconChevronDown(10, INK)}</button>
@@ -9953,21 +10115,20 @@ function renderFieldSchemasManage() {
   <div class="page-wrap"><div class="page-inner">
     ${topBarHtml({ title: "إدارة حقول الأقسام", subtitle: "أضف أو عدّل أي من حقول الأقسام التالية، مع إمكانية تحديد الترتيب.", icon: iconPencil(18, ROSE), backAction: "nav-back-admin" })}
 
-    <div style="display:flex;gap:14px;overflow-x:auto;padding:16px 8px 22px;margin-bottom:6px;">
-      ${editingId === "__new__" ? "" : `<button type="button" data-action="start-add-field" data-section="${esc(activeSectionId)}" style="flex-shrink:0;width:110px;min-height:150px;border-radius:22px;border:2px dashed ${BORDER};background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:${SUBTLE};font-size:11.5px;font-weight:700;">${iconPlus(22, SUBTLE)}إضافة حقل</button>`}
-      ${sections.map((sec, n) => { const PAL = bsPalette(); const c = PAL[n % PAL.length]; const on = sec.id === activeSectionId; return `<button type="button" data-action="select-field-schema-section" data-section="${esc(sec.id)}" style="flex-shrink:0;width:170px;min-height:150px;border-radius:22px;border:none;cursor:pointer;text-align:right;padding:16px;display:flex;flex-direction:column;justify-content:space-between;background:${c.bg};box-shadow:${on ? "0 14px 26px rgba(80,40,60,0.20)" : "0 6px 14px rgba(80,40,60,0.08)"};outline:${on ? "3px solid " + ROSE : "none"};outline-offset:2px;transform:${on ? "translateY(-4px)" : "none"};transition:transform .15s ease, box-shadow .15s ease;font-family:inherit;">
-        ${fieldIconTileHtml(["text", "target", "chart", "users", "bulb", "trophy"][n % 6], 32, n)}
-        <span style="font-size:14.5px;font-weight:800;color:${INK};line-height:1.4;">${esc(sec.label)}</span></button>`; }).join("")}
+    <div class="hint" style="margin:0 0 12px;">اختاري القسم ثم عدّلي حقوله. «إلزامي» = لا يُرسل التقرير إلا بتعبئته. للترتيب استخدمي أسهم ▲▼ بجانب كل حقل.</div>
+    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+      <div class="card" style="flex:1 1 240px;max-width:320px;display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:12px;font-weight:800;color:${ROSE};margin-bottom:4px;">أقسام التقرير</div>
+        ${sections.map((sec) => { const on = sec.id === activeSectionId; const cnt = ((SECTION_FIELD_SCHEMAS[sec.id] || {}).fields || []).length; return `<button type="button" data-action="select-field-schema-section" data-section="${esc(sec.id)}" style="font-family:inherit;display:flex;align-items:center;gap:8px;padding:11px 12px;min-height:44px;border-radius:12px;cursor:pointer;text-align:right;border:1px solid ${on ? "#d9b8c2" : "transparent"};background:${on ? "#f6edf0" : "transparent"};"><span style="flex:1;font-weight:${on ? 800 : 600};font-size:13.5px;color:${INK};">${esc(sec.label)}</span><span class="badge" style="background:${GRAY_BG};color:${ROSE};">${cnt} حقل</span></button>`; }).join("")}
+      </div>
+      <div style="flex:3 1 460px;min-width:0;">
+        ${editingId === "__new__" ? fieldEditFormHtml(draft, true) : ""}
+        <div style="font-size:15px;font-weight:800;margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${iconLayers(18, ROSE)} <span style="flex:1;">حقول «${esc((sections.find((s) => s.id === activeSectionId) || {}).label || activeSectionId)}»</span><span class="badge" style="background:${GRAY_BG};color:${ROSE};">${fields.length} حقل</span><span class="badge" style="background:${DANGER_BG};color:${DANGER};">${fields.filter((f) => f.required).length} إلزامي</span>${editingId === "__new__" ? "" : pillBtn("إضافة حقل", { icon: iconPlus(14, "#fff"), action: "start-add-field", data: { section: activeSectionId } })}</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+          ${fields.map((f, i) => editingId === f.id ? fieldEditFormHtml(draft, false) : fieldSchemaRowHtml(f, i, fields.length, activeSectionId)).join("") || `<div class="card" style="color:${SUBTLE};font-size:12.5px;">لا توجد حقول بعد.</div>`}
+        </div>
+      </div>
     </div>
-
-    ${editingId === "__new__" ? fieldEditFormHtml(draft, true) : ""}
-
-    <div style="font-size:15px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:8px;">${iconLayers(18, ROSE)} حقول (${esc((sections.find((s) => s.id === activeSectionId) || {}).label || activeSectionId)})</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:16px;">
-      ${fields.map((f, i) => editingId === f.id ? fieldEditFormHtml(draft, false) : fieldSchemaRowHtml(f, i, fields.length, activeSectionId)).join("") || `<div class="card" style="color:${SUBTLE};font-size:12.5px;">لا توجد حقول بعد.</div>`}
-    </div>
-
-    ${editingId === "__new__" ? "" : pillBtn("إضافة حقل جديد", { variant: "ghost", icon: iconPlus(15, ROSE), action: "start-add-field", data: { section: activeSectionId } })}
   </div></div>`;
 }
 
@@ -10075,6 +10236,7 @@ function bkPanelHtml(arr) {
     <div class="repeat-item-head"><span class="repeat-item-title">إدخال ${esc(schema.itemLabel)} من نص</span></div>
     <div class="hint" style="margin-bottom:8px;">اكتبي سطرًا لكل عنصر، وافصلي بين الحقول بـ «|» بهذا الترتيب. الحقل الفارغ اتركيه فاضي، والحقول الأخيرة تقدرين تحذفينها. (* = مطلوب)</div>
     <div class="hint" style="background:${GRAY_BG};border-radius:10px;padding:9px 12px;line-height:2;">${order}</div>
+    <div class="hint" style="margin-top:8px;line-height:1.9;">مثال لسطر واحد (بدون رقم في أوله):<div style="background:#fff;border:1px dashed ${BORDER};border-radius:10px;padding:8px 12px;margin-top:4px;color:${INK};direction:rtl;">${esc(fields.map((f) => { const o = (f.options || f.baseOptions || [])[0]; return o ? (typeof o === "string" ? o : (o.label || o.value)) : f.label; }).join(" | "))}</div></div>
     ${optsHtml}
     <textarea class="input" id="bk-text" rows="6" style="margin-top:12px;font-family:inherit;line-height:1.9;min-height:140px;">${esc(b.text || "")}</textarea>
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">${pillBtn("معاينة", { variant: "ghost", action: "bk-preview", data: { arr } })}${ok ? pillBtn(`إضافة ${ok} عنصر`, { action: "bk-apply", data: { arr } }) : ""}${pillBtn("إغلاق", { variant: "ghost", action: "bk-close" })}</div>
@@ -10117,7 +10279,28 @@ function setFieldFromEl(el) {
   } else {
     S.sectionDraft[ds.field] = value;
   }
+  autoSaveSchedule();
 }
+// حفظ المسودة تلقائيًا بعد توقف الكتابة ثوانٍ قليلة (لا يغيّر حالة «مكتمل»، ولا يعيد رسم الصفحة)
+let __autoSaveTimer = null;
+function autoSaveSetInd(txt, color) { const el = document.getElementById("autosave-ind"); if (el) { el.textContent = txt; el.style.color = color || SUBTLE; } }
+function autoSaveSchedule() {
+  if (S.view !== "unit-report" || !S.activeSectionId || adminReportsReadOnly()) return;
+  S.__autoSaveSec = S.activeSectionId; S.__autoSaveRep = S.currentReportId;
+  autoSaveSetInd("جارٍ الحفظ…", SUBTLE);
+  clearTimeout(__autoSaveTimer);
+  __autoSaveTimer = setTimeout(autoSaveRun, 2500);
+}
+function autoSaveRun() {
+  __autoSaveTimer = null;
+  if (S.view !== "unit-report" || S.activeSectionId !== S.__autoSaveSec || S.currentReportId !== S.__autoSaveRep || !S.sectionDraft) return;
+  try {
+    if (navigator.onLine === false) { autoSaveSetInd("لم يُحفظ، سيُعاد تلقائيًا", DANGER); __autoSaveTimer = setTimeout(autoSaveRun, 5000); return; }
+    const ok = trySaveSectionWithStatus(S.sectionCompleted ? "completed" : "draft");
+    if (ok) autoSaveSetInd("تم الحفظ ✓", GREEN); else { S.sectionSaveError = ""; autoSaveSetInd("لم يُحفظ — أكملي الحقول المطلوبة", DANGER); }
+  } catch (e) { autoSaveSetInd("لم يُحفظ، سيُعاد تلقائيًا", DANGER); }
+}
+function autoSaveFlush() { if (__autoSaveTimer) { clearTimeout(__autoSaveTimer); autoSaveRun(); } }
 function expandableSelectHtml(name, value, baseOptions, customOptions, placeholder, otherLabel, arr, id, subarr, subid) {
   otherLabel = otherLabel || "أخرى";
   const options = [...baseOptions, ...customOptions, otherLabel];
@@ -10326,6 +10509,7 @@ function renderUnitReport() {
     <div class="report-main">
       ${topBarHtml({ title: `${unit.name} — ${esc(entry.label)}`, subtitle: `${progress.completed} من ${progress.total} أقسام مكتملة`, backAction: "nav-back-from-report",
         right: badgeHtml(meta.label, meta.color, meta.bg) +
+               (actionAllowed("create-new-report") && !adminReportsReadOnly() ? pillBtn("تقرير جديد", { variant: "ghost", icon: iconPlus(14, INK), action: "create-new-report" }) : "") +
                pillBtn("مسار الاعتماد", { variant: "ghost", icon: iconTarget(15, INK), action: "nav-to", data: { view: "approval-path-tracking" } }) +
                pillBtn("عرض كامل", { variant: "ghost", icon: iconLayers(15, INK), action: "nav-to", data: { view: "full-report" } }) +
                (RPT_SHOW_PRINT_PREVIEW ? pillBtn("معاينة الطباعة", { variant: "ghost", icon: iconPrinter(15, INK), action: "nav-to", data: { view: "report-preview" } }) : "") +
@@ -10438,6 +10622,7 @@ function sectionEditorHtml(unit, report) {
   <div class="card card-lg">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
       <button data-action="close-section" style="display:flex;align-items:center;gap:5px;background:none;border:none;color:${ROSE};font-size:12px;font-weight:700;cursor:pointer;padding:0;">${iconArrowRight(14, ROSE)} رجوع إلى تقاريري</button>
+      <span id="autosave-ind" style="font-size:11.5px;font-weight:700;color:${SUBTLE}">${S.sectionDraft ? "المسودة تُحفظ تلقائيًا" : ""}</span>
       <span style="font-size:11px;color:${SUBTLE}">القسم ${sectionIndex + 1} من ${secList.length}</span>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 18px;">
@@ -10458,7 +10643,7 @@ function sectionEditorHtml(unit, report) {
     ${S.ui.showApSendPicker ? apSendPickerHtml(unit, report) : ""}
     <div class="section-editor-nav">
       ${pillBtn("السابق", { variant: "ghost", action: "section-prev", disabled: sectionIndex <= 0 })}
-      <div style="flex:1;">${actionAllowed("section-save-draft") ? pillBtn(S.sectionSaveStatus || "حفظ كمسودة", { variant: "soft", icon: iconSave(15, GREEN), action: "section-save-draft" }) : ""}</div>
+      <div style="flex:1;"></div>
       ${sectionIndex >= secList.length - 1
         ? (report.status === "draft" || report.status === "returned" || report.status === "needs_completion"
             ? (matchApprovalPath(unit, report)
@@ -10469,7 +10654,7 @@ function sectionEditorHtml(unit, report) {
             : report.status === "completed"
             ? pillBtn("مكتمل — بانتظار الاعتماد", { variant: "soft", icon: iconCheckCircle(15, GREEN), disabled: true })
             : pillBtn("معتمد ✓", { variant: "soft", icon: iconCheckCircle(15, "#6b3fa0"), disabled: true }))
-        : `<button class="next-btn" data-action="section-next">التالي ${iconChevronLeft(15, "#fff")}</button>`}
+        : `<button class="next-btn" data-action="section-next">حفظ والتالي ${iconChevronLeft(15, "#fff")}</button>`}
     </div>
   </div>`;
 }
@@ -11734,6 +11919,114 @@ function shareReportModalHtml(unit, report) {
       <div class="hint" style="margin-top:10px;line-height:1.8;">ملاحظة: الرابط العام للمشاهدة بدون دخول، مع «إيقاف الرابط»، يحتاج ربطًا بالقاعدة وأضيفه مع بند «الحفظ والأرشيف وDrive».</div>
     </div></div>`;
 }
+
+/* =============================== PDF والأرشفة (Drive / الشيت) =============================== */
+const HTML2PDF_URL = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+function loadHtml2Pdf() {
+  if (window.html2pdf) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const sc = document.createElement("script"); sc.src = HTML2PDF_URL; sc.onload = () => res(); sc.onerror = () => rej(new Error("تعذّر تحميل مكتبة PDF — تأكدي من الإنترنت"));
+    document.head.appendChild(sc);
+  });
+}
+function reportFileBase(unit, report) {
+  const clean = (x) => String(x || "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+  const yr = (report.shared && report.shared.hijriYear) || (report.sections && report.sections.basic && report.sections.basic.hijriYear) || "";
+  return clean(unit.name + " - " + (report.label || "تقرير") + (yr ? " " + yr : ""));
+}
+// PDF بدقة عالية من نفس صفحات A4 المعروضة (يُبنى خارج الشاشة فلا يتأثر بالعرض الحالي)
+async function reportPdfBlob(unit, report) {
+  await loadHtml2Pdf();
+  const host = document.createElement("div");
+  host.style.cssText = "position:fixed;left:-10000px;top:0;width:794px;background:#fff;direction:rtl;";
+  host.className = "rpt-pdf";
+  host.innerHTML = rptWrap(rptUnitSettings(unit), fullReportOrPreviewBody(unit, report, null));
+  document.body.appendChild(host);
+  try { linkifyReportView(); } catch (e) { /* تجاهل */ }
+  try {
+    try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (e) { /* تجاهل */ }
+    await new Promise((r) => setTimeout(r, 400));
+    const blob = await window.html2pdf().from(host).set({
+      margin: 0, filename: reportFileBase(unit, report) + ".pdf", image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", windowWidth: 794 },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }, pagebreak: { mode: ["css", "legacy"], before: ".a4-page + .a4-page" },
+    }).outputPdf("blob");
+    return blob;
+  } finally { host.remove(); }
+}
+function blobToBase64(blob) {
+  return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1] || ""); fr.onerror = () => rej(new Error("تعذّر قراءة الملف")); fr.readAsDataURL(blob); });
+}
+function downloadBlob(blob, name) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+function archiveFolderId(url) { const m = /\/folders\/([A-Za-z0-9_-]+)/.exec(String(url || "")); return m ? m[1] : ""; }
+async function archivePost(a, payload) {
+  const res = await fetch(a.scriptUrl, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload), redirect: "follow" });
+  let out = null; try { out = await res.json(); } catch (e) { throw new Error("ردّ السكربت غير مفهوم — تأكدي أن نشره «أي شخص» وأن الرابط ينتهي بـ /exec"); }
+  if (!out || !out.ok) throw new Error((out && out.error) || "فشل غير معروف");
+  return out;
+}
+function archiveMeta(unit, report) {
+  const dept = (S.departments || []).find((d) => d.id === unit.departmentId);
+  const yr = (report.shared && report.shared.hijriYear) || "";
+  return { dept: (dept && dept.name) || "بدون قسم", unit: unit.name, period: (report.label || "تقرير"), year: yr, fileName: reportFileBase(unit, report) + ".pdf", status: report.status, reportId: report.id };
+}
+// ينفّذ جهة واحدة (drive | sheet) ويعيد { ok, url?, error? } — الفشل لا يمنع غيره
+async function archiveRunTarget(target, unit, report, pdfBlob) {
+  const a = archiveCfg(themeOf(S.siteSettings || {}));
+  if (!a.scriptUrl || !/^https:\/\//.test(a.scriptUrl)) return { ok: false, error: "رابط السكربت غير مضبوط في «الأرشفة وDrive»" };
+  const meta = archiveMeta(unit, report);
+  try {
+    if (target === "drive") {
+      if (!archiveFolderId(a.rootFolder)) return { ok: false, error: "رابط المجلد المركزي غير مضبوط" };
+      const pdf = await blobToBase64(pdfBlob || await reportPdfBlob(unit, report));
+      const out = await archivePost(a, { action: "saveReport", pdf, rootFolderId: archiveFolderId(a.rootFolder), unitFolders: !!a.unitFolders, shareEmail: a.senderEmail || "", ...meta });
+      return { ok: true, url: out.url || "" };
+    }
+    const out = await archivePost(a, { action: "logReport", by: (S.currentUser && S.currentUser.name) || "", at: new Date().toISOString(), ...meta });
+    return { ok: true, url: out.url || "" };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+}
+// تشغيل الأرشفة (من نافذة «حفظ وإرسال»، أو تلقائيًا عند الاعتماد النهائي). only = جهات محددة لإعادة المحاولة
+async function archiveRun(unitId, reportId, only) {
+  const unit = (S.units || []).find((u) => u.id === unitId); const report = ((S.reports || {})[unitId] || []).find((r) => r.id === reportId);
+  if (!unit || !report) return;
+  const a = archiveCfg(themeOf(S.siteSettings || {}));
+  const targets = (only || ["drive", "sheet"]).filter((t) => (t === "drive" ? a.drive : a.sheet));
+  const st = S.ui.arRun && S.ui.arRun.reportId === reportId ? S.ui.arRun : { unitId, reportId, res: {} };
+  S.ui.arRun = st; targets.forEach((t) => { st.res[t] = { wait: true }; }); st.busy = true; if (S.ui.arOpen) render();
+  let blob = null;
+  if (targets.includes("drive")) { try { blob = await reportPdfBlob(unit, report); } catch (e) { st.res.drive = { ok: false, error: e.message }; targets.splice(targets.indexOf("drive"), 1); } }
+  for (const t of targets) { st.res[t] = await archiveRunTarget(t, unit, report, blob); if (S.ui.arOpen) render(); }
+  st.busy = false;
+  try { const cur = ((S.reports || {})[unitId] || []).find((r) => r.id === reportId); if (cur) saveReportEntry(unitId, { ...cur, archive: { at: Date.now(), drive: st.res.drive ? { ok: !!st.res.drive.ok, url: st.res.drive.url || "" } : (cur.archive || {}).drive, sheet: st.res.sheet ? { ok: !!st.res.sheet.ok } : (cur.archive || {}).sheet } }); } catch (e) { /* تجاهل */ }
+  if (S.ui.arOpen) render();
+}
+function archiveModalHtml(unit, report) {
+  const a = archiveCfg(themeOf(S.siteSettings || {}));
+  const st = S.ui.arRun && S.ui.arRun.reportId === report.id ? S.ui.arRun : null;
+  const line = (key, label, on) => {
+    const r = st && st.res[key];
+    const state = !on ? `<span style="color:${SUBTLE};font-size:12px;">غير مفعّلة من الإعدادات</span>` : !r ? `<span style="color:${SUBTLE};font-size:12px;">لم تُنفَّذ بعد</span>` : r.wait ? `<span style="color:${GOLD};font-size:12px;font-weight:700;">جارٍ…</span>` : r.ok ? `<span style="color:${GREEN};font-size:12px;font-weight:800;">✓ تم${r.url ? ` — <a href="${esc(r.url)}" target="_blank" rel="noopener" style="color:${GREEN};">فتح</a>` : ""}</span>` : `<span style="color:${DANGER};font-size:12px;font-weight:700;">✗ فشل: ${esc(r.error || "")}</span>`;
+    const retry = on && r && r.ok === false ? `<button type="button" class="pill-btn pill-ghost" style="padding:4px 10px;" data-action="ar-retry" data-t="${key}">إعادة المحاولة</button>` : "";
+    return `<div style="display:flex;align-items:center;gap:10px;padding:11px 0;border-top:1px solid ${BORDER};"><div style="flex:1;"><div style="font-size:13.5px;font-weight:800;">${label}</div><div style="margin-top:3px;">${state}</div></div>${retry}</div>`;
+  };
+  return `<div class="no-print" data-action="ar-close" style="position:fixed;inset:0;background:rgba(40,20,30,.45);z-index:9000;display:flex;align-items:flex-end;justify-content:center;">
+    <div data-stop="1" style="background:#faf6f6;width:min(480px,100%);max-height:88vh;overflow:auto;border-radius:22px 22px 0 0;padding:18px 18px 24px;">
+      <div style="font-size:16px;font-weight:800;margin-bottom:4px;">حفظ وإرسال</div>
+      <div class="hint" style="margin-bottom:8px;">${esc(unit.name)} — ${esc(report.label || "")}. القاعدة تحفظ دائمًا؛ وDrive والشيت حسب الإعدادات، وفشل أحدهما لا يمنع غيره.</div>
+      ${line("db", "القاعدة (حفظ دائم)", false).replace(/غير مفعّلة من الإعدادات/, "✓ محفوظ دائمًا").replace(`color:${SUBTLE}`, `color:${GREEN}`)}
+      ${line("drive", "Google Drive (نسخة PDF)", !!a.drive)}
+      ${line("sheet", "سجل Google Sheet", !!a.sheet)}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">
+        ${pillBtn(S.ui.arRun && S.ui.arRun.busy ? "جارٍ التنفيذ…" : "تنفيذ الآن", { icon: iconCheckCircle(15, "#fff"), action: "ar-run", disabled: !!(S.ui.arRun && S.ui.arRun.busy) || (!a.drive && !a.sheet) })}
+        ${pillBtn("إغلاق", { variant: "ghost", action: "ar-close" })}
+      </div>
+      ${!a.drive && !a.sheet ? `<div class="hint" style="margin-top:10px;">فعّلي Drive أو الشيت من «إعدادات الموقع ← الأرشفة وDrive».</div>` : ""}
+    </div></div>`;
+}
 function renderFullReport() {
   const unit = S.units.find((u) => u.id === S.currentUnitId);
   const report = getCurrentReportEntry();
@@ -11745,8 +12038,9 @@ function renderFullReport() {
   <div class="page-wrap"><div class="page-inner report">
     ${topBarHtml({ title: "عرض التقرير كاملاً", subtitle: `${unit.name} — ${esc(report.label)} — ${progress.completed} من ${progress.total} أقسام مكتملة`,
       backAction: rvItem ? "nav-to" : (readOnlyVisit ? "nav-to" : "nav-to-unit-report"), backData: rvItem ? { view: "custom-path-inbox" } : (readOnlyVisit ? { view: "all-reports" } : undefined),
-      right: `<div style="display:flex;gap:8px;flex-wrap:wrap;">${pillBtn("تنزيل PDF", { icon: iconDownload(15, "#fff"), action: "print-page" })}${pillBtn("مشاركة", { variant: "ghost", icon: iconArrowRight(15, INK), action: "share-report-open", data: { btn: "share-report" } })}${RPT_SHOW_PRINT_PREVIEW ? pillBtn("معاينة الطباعة", { variant: "ghost", icon: iconPrinter(15, INK), action: "nav-to", data: { view: "report-preview" } }) : ""}</div>` })}
+      right: `<div style="display:flex;gap:8px;flex-wrap:wrap;">${pillBtn(S.ui.pdfBusy ? "جارٍ إنشاء PDF…" : "تنزيل PDF", { icon: iconDownload(15, "#fff"), action: "pdf-download" })}${(S.isAdmin || actionAllowed("ar-save-send") || canManageUsers()) ? pillBtn("حفظ وإرسال", { variant: "ghost", icon: iconSave(15, INK), action: "ar-open" }) : ""}${pillBtn("طباعة", { variant: "ghost", icon: iconPrinter(15, INK), action: "print-page" })}${pillBtn("مشاركة", { variant: "ghost", icon: iconArrowRight(15, INK), action: "share-report-open", data: { btn: "share-report" } })}${RPT_SHOW_PRINT_PREVIEW ? pillBtn("معاينة الطباعة", { variant: "ghost", icon: iconPrinter(15, INK), action: "nav-to", data: { view: "report-preview" } }) : ""}</div>` })}
     ${S.ui.shareOpen ? shareReportModalHtml(unit, report) : ""}
+    ${S.ui.arOpen ? archiveModalHtml(unit, report) : ""}
     ${rptWrap(rptUnitSettings(unit), fullReportOrPreviewBody(unit, report, rvItem ? apReviewAfterPageHtml(rvItem) : null))}
     ${rvItem ? apReviewPanelHtml(rvItem) : ""}
     ${readOnlyVisit ? "" : `<div class="hint" style="margin-top:12px;">للتعديل على أي قسم، ارجعي إلى "مسودة التقرير" واختاري القسم من قائمة المراحل.</div>`}
@@ -11790,6 +12084,11 @@ function liveUpdateComputed(el) {
 function attachFormListeners() {
   appEl.addEventListener("input", (e) => {
     const el = e.target;
+    if (el.id === "ops-recent-q") {
+      S.ui.opsRecentQ = el.value; const pos = el.selectionStart; render();
+      const n = document.getElementById("ops-recent-q"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (_) {} }
+      return;
+    }
     if (el.dataset && el.dataset.usM) {
       const uid = S.currentUnitId; if (!uid || !(S.isAdmin || isUnitInUserScope(uid))) return;
       ulSetImage(uid, el.dataset.usM, Math.max(0, Math.min(50, Number(el.value) || 0)));
@@ -12287,6 +12586,7 @@ function attachClickListener() {
     if (!btn) return;
     const action = btn.dataset.action;
     const ds = btn.dataset;
+    if (S.ui && S.ui.notifOpen && action !== "notif-toggle") { S.ui.notifOpen = false; if (action === "notif-close") { render(); return; } }
     if (buttonBlockedEl(btn)) return;
     if (adminReportsReadOnly() && ADMIN_READONLY_BLOCKED.includes(action)) { alert("حساب مديرة النظام للاطلاع فقط — لا يمكن تعديل التقارير أو اعتمادها من هنا."); return; }
     if (!S.currentUser && action.indexOf("portal-") === 0 && handlePortalAction(action, ds)) return;
@@ -12353,6 +12653,20 @@ function attachClickListener() {
         break;
       }
       case "nav-back-admin": S.view = "browse-structure"; render(); break;
+      case "dash-kind-tab": { S.ui.dashKindTab = ds.kind; render(); break; }
+      case "dash-group": {
+        if (!S.isAdmin) break;
+        const kind = ds.kind; if (!DASH_KINDS.some((k) => k.id === kind)) break;
+        const keys = String(ds.keys || "").split(",").filter(Boolean);
+        const cfg = JSON.parse(JSON.stringify(dashConfig()));
+        let cur = (cfg[kind] && Array.isArray(cfg[kind].hidden)) ? cfg[kind].hidden.slice() : [];
+        cur = cur.filter((k) => keys.indexOf(k) === -1);
+        if (ds.show !== "1") cur = cur.concat(keys);
+        cfg[kind] = { ...(cfg[kind] || {}), hidden: cur };
+        S.dashboardConfig = cfg; dataStore.saveDashboardConfig(cfg);
+        addPermLog("dashboard", kind, (DASH_KINDS.find((k) => k.id === kind) || {}).label || kind, (ds.show === "1" ? "إظهار" : "إخفاء") + " مجموعة (" + keys.length + " عنصر) من لوحة المعلومات");
+        render(); break;
+      }
       case "dash-toggle": {
         if (!S.isAdmin) break;
         const kind = ds.kind, key = ds.key;
@@ -12483,7 +12797,10 @@ function attachClickListener() {
         break;
       }
       case "font-pick": { const se = document.getElementById(ds.sel); if (se) { se.value = ds.v; se.dispatchEvent(new Event("change", { bubbles: true })); } break; }
-      case "us-tab": S.ui.usTab = ds.tab; render(); break;
+      case "us-tab": S.ui.usTab = ds.tab; S.ui.usArFolder = null; render(); break;
+      case "us-ar-toggle": { const u = S.currentUnitId; if (!u) break; { const el0 = document.getElementById("us-ar-folder"); if (el0) S.ui.usArFolder = el0.value; } usArchiveSet(u, { on: !usArchiveGet(u).on }); S.ui.usMsg = ""; render(); break; }
+      case "us-ar-save": { const u = S.currentUnitId, el = document.getElementById("us-ar-folder"); const v = el ? el.value.trim() : ""; if (!u) break; if (v && !/^https:\/\/[^\s]+$/.test(v)) { S.ui.usArFolder = v; S.ui.usMsg = ""; render(); break; } S.ui.usArFolder = null; usArchiveSet(u, { folder: v }); S.ui.usMsg = v ? "تم حفظ رابط المجلد." : "تم حذف رابط المجلد."; render(); break; }
+      case "us-ar-test": { const el = document.getElementById("us-ar-folder"); const v = el ? el.value.trim() : ""; if (!/^https:\/\/drive\.google\.com\/[^\s]+$/.test(v)) { alert("الرابط لازم يكون رابط مجلد من Drive ويبدأ بـ https://drive.google.com/"); break; } window.open(v, "_blank", "noopener"); break; }
       case "site-tab": {
         S.ui.siteTab = ds.tab;
         document.querySelectorAll("[data-st]").forEach((el) => { el.style.display = el.getAttribute("data-st") === ds.tab ? "" : "none"; });
@@ -12594,6 +12911,7 @@ function attachClickListener() {
       case "nav-back-from-report": S.view = "unit-reports"; S.activeSectionId = null; render(); break;
       case "nav-back-to-report": S.view = "unit-report"; render(); break;
       case "nav-to-unit-report": S.view = "unit-report"; render(); break;
+      case "notif-toggle": { if (S.ui.notifOpen && S.ui.notifOpenView === S.view) { S.ui.notifOpen = false; render(); break; } S.ui.notifOpen = true; S.ui.notifOpenView = S.view; S.ui.notifPrev = notifSeenGet(); notifSeenSet(Date.now()); render(); break; }
       case "open-sidebar": if (isMobileViewport()) S.mobileSidebarOpen = true; else S.sidebarOpen = true; render(); break;
       case "close-sidebar": S.sidebarOpen = false; render(); break;
       case "close-mobile-sidebar": S.mobileSidebarOpen = false; render(); break;
@@ -12711,7 +13029,12 @@ function attachClickListener() {
               const by = { ...(entityPrefs("unit:" + u.id).skipBy || {}) };
               const curP = (by[per] || []).filter((x) => x !== ds.key);
               if (turnOn) by[per] = [...curP, ds.key]; else if (curP.length) by[per] = curP; else delete by[per];
-              saveEntityPrefs("unit:" + u.id, { skipBy: by });
+              const baseL = apUnitSkipList(u.id);
+              if (!turnOn && baseL.includes(ds.key)) {
+                // كانت متخطّاة في كل الفترات: نفتحها لهذه الفترة فقط ونبقيها متخطّاة في باقي الفترات
+                PERIOD_TYPES.filter((p) => p !== per).forEach((p) => { by[p] = [...(by[p] || []).filter((x) => x !== ds.key), ds.key]; });
+                saveEntityPrefs("unit:" + u.id, { skipBy: by, skip: baseL.filter((x) => x !== ds.key) });
+              } else saveEntityPrefs("unit:" + u.id, { skipBy: by });
             } else {
               const cur = apUnitSkipList(u.id).filter((x) => x !== ds.key);
               saveEntityPrefs("unit:" + u.id, { skip: turnOn ? [...cur, ds.key] : cur });
@@ -12888,6 +13211,18 @@ function attachClickListener() {
         render();
         break;
       }
+      case "pdf-download": {
+        const unit = (S.units || []).find((u) => u.id === S.currentUnitId), report = getCurrentReportEntry(); if (!unit || !report || S.ui.pdfBusy) break;
+        S.ui.pdfBusy = true; render();
+        reportPdfBlob(unit, report).then((b) => downloadBlob(b, reportFileBase(unit, report) + ".pdf"))
+          .catch((e) => { alert("تعذّر إنشاء PDF: " + ((e && e.message) || e) + "\nسأفتح الطباعة بدلًا منه."); window.print(); })
+          .finally(() => { S.ui.pdfBusy = false; render(); });
+        break;
+      }
+      case "ar-open": S.ui.arOpen = true; render(); break;
+      case "ar-close": S.ui.arOpen = false; render(); break;
+      case "ar-run": archiveRun(S.currentUnitId, S.currentReportId); break;
+      case "ar-retry": archiveRun(S.currentUnitId, S.currentReportId, [ds.t]); break;
       case "print-page": window.print(); break;
       case "imp-open": S.ui.imp = { open: true, step: 1, type: "", sel: {}, keys: {}, cols: {}, mode: "append" }; render(); break;
       case "imp-close": if (e.target.closest("[data-stop]") && !e.target.closest("button[data-action=imp-close]")) break; S.ui.imp = null; render(); break;
@@ -12971,6 +13306,23 @@ function attachClickListener() {
         const entry = inProgress || createNewReportEntry(S.currentUnitId);
         S.currentReportId = entry.id; S.view = "unit-report"; S.openPhaseId = null; S.activeSectionId = null;
         jumpToFirstNotedSection(entry);
+        render();
+        break;
+      }
+      case "mtb-filter": {
+        S.ui.unitAllReportsStatusFilter = ds.st; S.view = "unit-all-reports"; S.activeSectionId = null; S.mobileSidebarOpen = false;
+        render(); window.scrollTo(0, 0);
+        break;
+      }
+      case "ops-perm-toggle": {
+        const role = rolesList().find((x) => x.id === ds.roleId); if (!role) break;
+        const p = rolePermsOf(role); const key = ds.kind === "page" ? "pages" : "buttons";
+        const has = p[key].includes(ds.id);
+        if (has && !confirm("إطفاء هذا لدور «" + role.name + "» يخفيه عن كل من لها هذا الدور. تأكيد؟")) break;
+        const next = { pages: [...p.pages], actions: [...p.actions], buttons: [...p.buttons] };
+        next[key] = has ? next[key].filter((x) => x !== ds.id) : [...next[key], ds.id];
+        S.roles = rolesList().map((x) => x.id === role.id ? { ...x, permissions: next } : x); dataStore.saveRoles(S.roles);
+        addPermLog("role", role.id, role.name, (has ? "إطفاء " : "تشغيل ") + (ds.kind === "page" ? "صفحة " : "زر ") + ds.id);
         render();
         break;
       }
@@ -13499,6 +13851,13 @@ function attachClickListener() {
         S.ui.editingFieldId = null; S.ui.fieldEditDraft = null;
         render(); break;
       }
+      case "toggle-schema-required": {
+        const schema = SECTION_FIELD_SCHEMAS[ds.section]; if (!schema) break;
+        const fields = schema.fields.map((f) => f.id === ds.id ? { ...f, required: !f.required } : f);
+        setSectionFieldsLive(ds.section, fields);
+        dataStore.saveSectionFieldSchemas({ ...dataStore.getSectionFieldSchemas(), [ds.section]: fields });
+        render(); break;
+      }
       case "remove-schema-field": {
         const sectionId = ds.section;
         const schema = SECTION_FIELD_SCHEMAS[sectionId];
@@ -13566,8 +13925,9 @@ function handleReportEditorAction(action, ds) {
     case "toggle-phase-collapse": S.phaseCollapsed = !S.phaseCollapsed; render(); return true;
     case "open-mobile-phase-sidebar": S.mobilePhaseOpen = true; render(); return true;
     case "close-mobile-phase-sidebar": S.mobilePhaseOpen = false; render(); return true;
-    case "select-section": openSection(ds.section); return true;
+    case "select-section": autoSaveFlush(); openSection(ds.section); return true;
     case "close-section": {
+      clearTimeout(__autoSaveTimer); __autoSaveTimer = null;
       // Autosave current progress as a draft (without changing completed flag), then
       // go back to this unit's report list ("تقاريري") — there's no phase-overview
       // screen to return to anymore.
@@ -13594,12 +13954,14 @@ function handleReportEditorAction(action, ds) {
       return true;
     }
     case "section-prev": {
+      clearTimeout(__autoSaveTimer); __autoSaveTimer = null;
       if (!trySaveSectionWithStatus(S.sectionCompleted ? "completed" : "draft")) { render(); return true; }
       const list = activeReportSections(), idx = list.findIndex((s) => s.id === S.activeSectionId);
       if (idx > 0) openSection(list[idx - 1].id);
       return true;
     }
     case "section-next": {
+      clearTimeout(__autoSaveTimer); __autoSaveTimer = null;
       if (!trySaveSectionWithStatus(S.sectionCompleted ? "completed" : "draft")) { render(); return true; }
       const list = activeReportSections(), idx = list.findIndex((s) => s.id === S.activeSectionId);
       if (idx < list.length - 1) openSection(list[idx + 1].id);
@@ -13806,6 +14168,7 @@ function applySiteColors(settings) {
   root.style.setProperty("--font-heading", `'${hfont}'`);
 }
 /* ===== الروابط: في التقرير تُضغط وتفتح بنافذة جديدة، وفي خانات الإدخال تحقق + https:// تلقائي + زر «تجربة الرابط» ===== */
+function rptShortUrl(u) { try { const x = new URL(u); const p = (x.pathname + x.search).replace(/^\//, ""); return x.host + (p ? "/" + (p.length > 22 ? p.slice(0, 20) + "…" : p) : ""); } catch (e) { return String(u).slice(0, 34); } }
 const RPT_URL_RE = /((?:https?:\/\/|www\.)[^\s<>"'،؛)\]]+)/g;
 function linkifyReportView() {
   document.querySelectorAll(".rpt-chapter-body, .a4-page .doc-kv, .a4-page td").forEach((root) => {
@@ -13816,7 +14179,14 @@ function linkifyReportView() {
       const frag = document.createDocumentFragment(); let last = 0; const txt = t.nodeValue; RPT_URL_RE.lastIndex = 0; let m;
       while ((m = RPT_URL_RE.exec(txt))) {
         if (m.index > last) frag.appendChild(document.createTextNode(txt.slice(last, m.index)));
-        const a = document.createElement("a"); a.href = /^www\./i.test(m[1]) ? "https://" + m[1] : m[1]; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = m[1]; a.dir = "ltr"; a.style.cssText = "color:#2f6fb0;text-decoration:underline;word-break:break-all;"; frag.appendChild(a); last = m.index + m[1].length;
+        const href = /^www\./i.test(m[1]) ? "https://" + m[1] : m[1];
+        const inTable = !!(t.parentElement && t.parentElement.closest("td"));
+        const wrap = document.createElement("span"); wrap.className = "lk-wrap";
+        const a = document.createElement("a"); a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer"; a.className = "lk-btn"; a.title = href;
+        a.innerHTML = (inTable ? "فتح" : "فتح الرابط") + " ↗"; wrap.appendChild(a);
+        const qr = document.createElement("span"); qr.className = "lk-qr"; qr.dir = "ltr";
+        try { const q = qrcode(0, "M"); q.addData(href); q.make(); qr.innerHTML = `<span class="lk-qr-img">${q.createSvgTag({ cellSize: 3, margin: 1, scalable: true })}</span><span class="lk-qr-tx">${esc(rptShortUrl(href))}</span>`; } catch (e) { qr.textContent = rptShortUrl(href); }
+        wrap.appendChild(qr); frag.appendChild(wrap); last = m.index + m[1].length;
       }
       if (last < txt.length) frag.appendChild(document.createTextNode(txt.slice(last)));
       t.parentNode.replaceChild(frag, t);
